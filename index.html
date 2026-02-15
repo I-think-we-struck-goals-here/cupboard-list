@@ -9,7 +9,31 @@
     <main class="app" id="app">
       <header class="header">
         <h1 class="logo">A&amp;Z Cupboard</h1>
+        <div class="header-actions">
+          <button id="search-toggle-btn" class="icon-btn" type="button" aria-label="Toggle search">
+            <svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true">
+              <circle cx="8.5" cy="8.5" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+              <path d="M12.4 12.4L16.4 16.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+            </svg>
+          </button>
+          <button id="top-add-button" class="icon-btn" type="button" aria-label="Add item">
+            <svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true">
+              <path d="M10 4.3v11.4M4.3 10h11.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+            </svg>
+          </button>
+        </div>
       </header>
+
+      <section class="search-panel" id="search-panel">
+        <div class="search-field">
+          <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">
+            <circle cx="8.5" cy="8.5" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+            <path d="M12.4 12.4L16.4 16.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+          </svg>
+          <input id="search-input" class="search-input" type="text" placeholder="Search items" autocomplete="off" />
+          <button id="clear-search-btn" class="clear-search-btn" type="button" aria-label="Clear search">x</button>
+        </div>
+      </section>
 
       <section class="filter-bar" id="filter-bar" role="radiogroup" aria-label="Filters"></section>
 
@@ -105,13 +129,6 @@
         </div>
       </article>
     </template>
-
-    <div class="fab-bar">
-      <div class="fab-inner">
-        <input id="search-input" class="search-input" type="text" placeholder="Search items..." />
-        <button id="fab-add-button" class="add-btn" type="button">+ Add</button>
-      </div>
-    </div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

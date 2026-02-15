@@ -62,6 +62,9 @@ const NAME_COLLATOR = new Intl.Collator(undefined, {
 });
 
 const filterBar = document.querySelector("#filter-bar");
+const searchPanel = document.querySelector("#search-panel");
+const searchToggleButton = document.querySelector("#search-toggle-btn");
+const clearSearchButton = document.querySelector("#clear-search-btn");
 const itemsBody = document.querySelector("#items-body");
 const rowTemplate = document.querySelector("#row-template");
 const addSection = document.querySelector("#add-section");
@@ -83,11 +86,12 @@ const editCustomCategoryInput = document.querySelector("#edit-custom-category");
 const cancelEditButton = document.querySelector("#cancel-edit");
 const editMessage = document.querySelector("#edit-message");
 const searchInput = document.querySelector("#search-input");
-const fabAddButton = document.querySelector("#fab-add-button");
+const topAddButton = document.querySelector("#top-add-button");
 
 let state = loadState();
 let editingItemId = null;
 let searchQuery = "";
+let searchOpen = false;
 let activeFilter = "all";
 
 function createId() {
@@ -112,6 +116,14 @@ function toNumberOrNull(value) {
 
 function formatQuantity(value) {
   return Number(value.toFixed(3)).toString();
+}
+
+function normalizeText(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function isLow(item) {
@@ -198,25 +210,21 @@ function allCategories() {
 }
 
 function getFilteredItems() {
-  const query = searchQuery.trim().toLowerCase();
+  const tokens = normalizeText(searchQuery)
+    .split(/\s+/)
+    .filter(Boolean);
 
   return state.items.filter((item) => {
     const matchesFilter =
       activeFilter === "all" ||
       (activeFilter === "low" && isLow(item)) ||
       item.category === activeFilter;
-
-    if (!matchesFilter) {
-      return false;
+    if (tokens.length === 0) {
+      return matchesFilter;
     }
 
-    if (!query) {
-      return true;
-    }
-
-    const name = item.name.toLowerCase();
-    const category = item.category.toLowerCase();
-    return name.includes(query) || category.includes(query);
+    const haystack = normalizeText(`${item.name} ${item.category}`);
+    return tokens.every((token) => haystack.includes(token));
   });
 }
 
@@ -387,6 +395,32 @@ function renderRows() {
 function setFormMessage(message, tone = "ok") {
   formMessage.textContent = message;
   formMessage.dataset.tone = tone;
+}
+
+function syncSearchUI() {
+  const hasQuery = searchQuery.trim().length > 0;
+  searchPanel.classList.toggle("open", searchOpen);
+  searchPanel.classList.toggle("has-query", hasQuery);
+  searchToggleButton.classList.toggle("active", searchOpen || hasQuery);
+  searchToggleButton.setAttribute("aria-expanded", searchOpen ? "true" : "false");
+}
+
+function setSearchOpen(open, options = {}) {
+  searchOpen = open;
+  syncSearchUI();
+
+  if (open && options.focus) {
+    window.setTimeout(() => {
+      searchInput.focus();
+    }, 120);
+  }
+}
+
+function clearSearch() {
+  searchQuery = "";
+  searchInput.value = "";
+  renderRows();
+  syncSearchUI();
 }
 
 function syncCustomCategoryInput() {
@@ -560,8 +594,36 @@ function wireEvents() {
   searchInput.addEventListener("input", () => {
     searchQuery = searchInput.value;
     renderRows();
+    syncSearchUI();
   });
-  fabAddButton.addEventListener("click", () => {
+  searchInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    if (searchQuery.trim()) {
+      clearSearch();
+      return;
+    }
+
+    setSearchOpen(false);
+  });
+  searchToggleButton.addEventListener("click", () => {
+    if (searchOpen) {
+      clearSearch();
+      setSearchOpen(false);
+      return;
+    }
+
+    setSearchOpen(true, { focus: true });
+  });
+  clearSearchButton.addEventListener("click", () => {
+    clearSearch();
+    searchInput.focus();
+  });
+  topAddButton.addEventListener("click", () => {
+    clearSearch();
+    setSearchOpen(false);
     addSection.scrollIntoView({ behavior: "smooth", block: "start" });
     window.setTimeout(() => {
       newNameInput.focus();
@@ -588,6 +650,7 @@ function render() {
   syncCustomCategoryInput();
   syncEditCustomCategoryInput();
   renderRows();
+  syncSearchUI();
 }
 
 newLowLevelInput.value = DEFAULT_LOW_LEVEL;

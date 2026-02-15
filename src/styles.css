@@ -33,25 +33,82 @@ body {
 .app {
   max-width: 540px;
   margin: 0 auto;
-  padding: 0 16px 120px;
+  padding: 0 16px 36px;
 }
 
 .header {
   padding: 20px 0 10px;
   display: flex;
-  align-items: flex-end;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: space-between;
   position: sticky;
   top: 0;
   background: var(--bg);
   z-index: 50;
-  gap: 6px;
+  gap: 10px;
 }
 
 .logo {
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.5px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-mid);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.icon-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.icon-btn.active {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+.search-panel {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  margin-bottom: 0;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin-bottom 0.22s ease;
+}
+
+.search-panel.open,
+.search-panel.has-query {
+  max-height: 58px;
+  opacity: 1;
+  margin-bottom: 8px;
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: var(--text-dim);
 }
 
 .kicker {
@@ -275,8 +332,7 @@ button {
 .add-form input,
 .add-form select,
 .edit-form input,
-.edit-form select,
-.search-input {
+.edit-form select {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -290,13 +346,48 @@ button {
 .add-form input:focus,
 .add-form select:focus,
 .edit-form input:focus,
-.edit-form select:focus,
-.search-input:focus {
+.edit-form select:focus {
   border-color: var(--text);
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 0;
+  outline: none;
+  font-size: 16px;
 }
 
 .search-input::placeholder {
   color: var(--text-dim);
+}
+
+.clear-search-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease, color 0.14s ease;
+}
+
+.clear-search-btn:hover {
+  color: var(--text);
+}
+
+.search-panel.has-query .clear-search-btn {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .hidden {
@@ -405,40 +496,6 @@ button {
   font-size: 14px;
 }
 
-.fab-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
-  z-index: 100;
-}
-
-.fab-inner {
-  max-width: 540px;
-  margin: 0 auto;
-  display: flex;
-  gap: 8px;
-}
-
-.add-btn {
-  border: none;
-  background: var(--text);
-  color: var(--bg);
-  border-radius: var(--radius-sm);
-  padding: 11px 14px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.add-btn:hover {
-  opacity: 0.85;
-}
-
 @media (hover: none) {
   .item-action-btn {
     opacity: 1;
@@ -448,15 +505,10 @@ button {
 
 @media (max-width: 760px) {
   .app {
-    padding: 0 12px 110px;
+    padding: 0 12px 30px;
   }
 
   .grid {
     grid-template-columns: 1fr;
-  }
-
-  .fab-bar {
-    padding-left: 12px;
-    padding-right: 12px;
   }
 }
