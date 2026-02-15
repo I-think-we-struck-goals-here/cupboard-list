@@ -257,6 +257,15 @@ function renderRows() {
   const list = filteredAndSortedItems();
   itemsBody.innerHTML = "";
 
+  if (list.length === 0) {
+    const emptyState = document.createElement("p");
+    emptyState.className = "empty-state";
+    emptyState.textContent = "No items yet. Add your first cupboard item below.";
+    itemsBody.append(emptyState);
+    renderSummary();
+    return;
+  }
+
   for (const item of list) {
     const node = rowTemplate.content.firstElementChild.cloneNode(true);
 
@@ -271,10 +280,13 @@ function renderRows() {
     categoryCell.textContent = item.category;
     qtyInput.value = item.quantity;
     statusCell.textContent = statusText(item);
+    node.classList.toggle("low", isLow(item));
     if (!hasValidLevels(item)) {
-      statusCell.className = "status-warn";
+      statusCell.className = "item-status status-warn";
     } else {
-      statusCell.className = isLow(item) ? "status-low" : "status-ok";
+      statusCell.className = isLow(item)
+        ? "item-status status-low"
+        : "item-status status-ok";
     }
 
     qtyInput.addEventListener("change", () => {
