@@ -61,7 +61,6 @@ const NAME_COLLATOR = new Intl.Collator(undefined, {
   numeric: true
 });
 
-const summaryEl = document.querySelector("#summary");
 const filterBar = document.querySelector("#filter-bar");
 const itemsBody = document.querySelector("#items-body");
 const rowTemplate = document.querySelector("#row-template");
@@ -109,6 +108,10 @@ function toNumberOrNull(value) {
 
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatQuantity(value) {
+  return Number(value.toFixed(3)).toString();
 }
 
 function isLow(item) {
@@ -272,10 +275,9 @@ function renderCategoryControls() {
 }
 
 function renderFilters() {
-  const lowCount = state.items.filter((item) => isLow(item)).length;
   const options = [
     { value: "all", label: "All" },
-    { value: "low", label: "Low", badge: lowCount > 0 ? String(lowCount) : "" },
+    { value: "low", label: "Low" },
     ...allCategories().map((category) => ({ value: category, label: category }))
   ];
 
@@ -297,13 +299,6 @@ function renderFilters() {
     label.textContent = option.label;
     button.append(label);
 
-    if (option.badge) {
-      const badge = document.createElement("span");
-      badge.className = "low-badge";
-      badge.textContent = option.badge;
-      button.append(badge);
-    }
-
     button.addEventListener("click", () => {
       activeFilter = option.value;
       render();
@@ -311,11 +306,6 @@ function renderFilters() {
 
     filterBar.append(button);
   }
-}
-
-function renderSummary() {
-  const lowCount = state.items.filter((item) => isLow(item)).length;
-  summaryEl.textContent = `${state.items.length} items • ${lowCount} low`;
 }
 
 function renderRows() {
@@ -329,7 +319,6 @@ function renderRows() {
       ? "No items match your search."
       : "No items yet. Add your first cupboard item below.";
     itemsBody.append(emptyState);
-    renderSummary();
     return;
   }
 
@@ -342,12 +331,7 @@ function renderRows() {
 
     const title = document.createElement("span");
     title.textContent = group.category;
-
-    const count = document.createElement("span");
-    count.className = "category-count";
-    count.textContent = `${group.items.length} item${group.items.length === 1 ? "" : "s"}`;
-
-    header.append(title, count);
+    header.append(title);
 
     const listNode = document.createElement("div");
     listNode.className = "items-list";
@@ -358,6 +342,8 @@ function renderRows() {
 
       const nameCell = node.querySelector('[data-field="name"]');
       const qtyInput = node.querySelector('[data-field="quantity"]');
+      const decreaseButton = node.querySelector('[data-action="decrease"]');
+      const increaseButton = node.querySelector('[data-action="increase"]');
       const editButton = node.querySelector('[data-action="edit"]');
 
       nameCell.textContent = item.name;
@@ -366,6 +352,22 @@ function renderRows() {
 
       qtyInput.addEventListener("change", () => {
         item.quantity = qtyInput.value.trim();
+        saveState();
+        render();
+      });
+
+      decreaseButton.addEventListener("click", () => {
+        const current = toNumberOrNull(item.quantity) ?? 0;
+        const next = Math.max(0, current - 1);
+        item.quantity = formatQuantity(next);
+        saveState();
+        render();
+      });
+
+      increaseButton.addEventListener("click", () => {
+        const current = toNumberOrNull(item.quantity) ?? 0;
+        const next = current + 1;
+        item.quantity = formatQuantity(next);
         saveState();
         render();
       });
@@ -380,8 +382,6 @@ function renderRows() {
     section.append(header, listNode);
     itemsBody.append(section);
   }
-
-  renderSummary();
 }
 
 function setFormMessage(message, tone = "ok") {

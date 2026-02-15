@@ -4,17 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cupboard List</title>
-    <script type="module" crossorigin src="./assets/index-oWZBH0i6.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CqcSdMDF.css">
+    <script type="module" crossorigin src="./assets/index-CV4PktqL.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BeA0DUHg.css">
   </head>
   <body>
     <main class="app" id="app">
       <header class="header">
-        <div>
-          <p class="kicker">Home Inventory</p>
-          <h1 class="logo">Cupboard</h1>
-        </div>
-        <div class="summary" id="summary"></div>
+        <h1 class="logo">A&amp;Z Cupboard</h1>
       </header>
 
       <section class="filter-bar" id="filter-bar" role="radiogroup" aria-label="Filters"></section>
@@ -94,12 +90,13 @@
 
     <template id="row-template">
       <article class="item-row" role="listitem">
-        <span class="item-low-dot" aria-hidden="true"></span>
         <div class="item-main">
           <p data-field="name" class="item-name"></p>
         </div>
         <div class="item-qty-wrapper">
+          <button type="button" data-action="decrease" class="qty-stepper" aria-label="Decrease quantity">-</button>
           <input data-field="quantity" type="text" class="qty-input" aria-label="Quantity" />
+          <button type="button" data-action="increase" class="qty-stepper" aria-label="Increase quantity">+</button>
         </div>
         <div class="item-actions">
           <button type="button" data-action="edit" class="item-action-btn edit-btn" aria-label="Edit item">
