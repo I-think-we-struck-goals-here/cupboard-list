@@ -519,4 +519,8 @@ button {
   .grid {
     grid-template-columns: 1fr;
   }
+
+  .qty-input {
+    font-size: 16px;
+  }
 }
