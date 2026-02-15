@@ -62,6 +62,7 @@ const NAME_COLLATOR = new Intl.Collator(undefined, {
 });
 
 const summaryEl = document.querySelector("#summary");
+const filterBar = document.querySelector("#filter-bar");
 const itemsBody = document.querySelector("#items-body");
 const rowTemplate = document.querySelector("#row-template");
 const addSection = document.querySelector("#add-section");
@@ -88,6 +89,7 @@ const fabAddButton = document.querySelector("#fab-add-button");
 let state = loadState();
 let editingItemId = null;
 let searchQuery = "";
+let activeFilter = "all";
 
 function createId() {
   return globalThis.crypto?.randomUUID
@@ -118,10 +120,6 @@ function isLow(item) {
   }
 
   return quantity <= lowLevel;
-}
-
-function hasValidLevels(item) {
-  return toNumberOrNull(item.quantity) !== null && toNumberOrNull(item.lowLevel) !== null;
 }
 
 function normalizeInitialItems() {
@@ -199,11 +197,20 @@ function allCategories() {
 function getFilteredItems() {
   const query = searchQuery.trim().toLowerCase();
 
-  if (!query) {
-    return state.items.slice();
-  }
-
   return state.items.filter((item) => {
+    const matchesFilter =
+      activeFilter === "all" ||
+      (activeFilter === "low" && isLow(item)) ||
+      item.category === activeFilter;
+
+    if (!matchesFilter) {
+      return false;
+    }
+
+    if (!query) {
+      return true;
+    }
+
     const name = item.name.toLowerCase();
     const category = item.category.toLowerCase();
     return name.includes(query) || category.includes(query);
@@ -264,11 +271,46 @@ function renderCategoryControls() {
   populateCategorySelect(editCategorySelect, editCategorySelect.value);
 }
 
-function statusText(item) {
-  if (!hasValidLevels(item)) {
-    return "Check values";
+function renderFilters() {
+  const lowCount = state.items.filter((item) => isLow(item)).length;
+  const options = [
+    { value: "all", label: "All" },
+    { value: "low", label: "Low", badge: lowCount > 0 ? String(lowCount) : "" },
+    ...allCategories().map((category) => ({ value: category, label: category }))
+  ];
+
+  if (!options.some((option) => option.value === activeFilter)) {
+    activeFilter = "all";
   }
-  return isLow(item) ? "Running low" : "In stock";
+
+  filterBar.innerHTML = "";
+
+  for (const option of options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `filter-chip${activeFilter === option.value ? " active" : ""}`;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", activeFilter === option.value ? "true" : "false");
+    button.dataset.filter = option.value;
+
+    const label = document.createElement("span");
+    label.textContent = option.label;
+    button.append(label);
+
+    if (option.badge) {
+      const badge = document.createElement("span");
+      badge.className = "low-badge";
+      badge.textContent = option.badge;
+      button.append(badge);
+    }
+
+    button.addEventListener("click", () => {
+      activeFilter = option.value;
+      render();
+    });
+
+    filterBar.append(button);
+  }
 }
 
 function renderSummary() {
@@ -316,20 +358,11 @@ function renderRows() {
 
       const nameCell = node.querySelector('[data-field="name"]');
       const qtyInput = node.querySelector('[data-field="quantity"]');
-      const statusCell = node.querySelector('[data-field="status"]');
       const editButton = node.querySelector('[data-action="edit"]');
 
       nameCell.textContent = item.name;
       qtyInput.value = item.quantity;
-      statusCell.textContent = statusText(item);
       node.classList.toggle("low", isLow(item));
-      if (!hasValidLevels(item)) {
-        statusCell.className = "item-status status-warn";
-      } else {
-        statusCell.className = isLow(item)
-          ? "item-status status-low"
-          : "item-status status-ok";
-      }
 
       qtyInput.addEventListener("change", () => {
         item.quantity = qtyInput.value.trim();
@@ -514,8 +547,7 @@ function addItemFromForm(event) {
   }
 
   saveState();
-  renderCategoryControls();
-  renderRows();
+  render();
 
   newItemForm.reset();
   newLowLevelInput.value = DEFAULT_LOW_LEVEL;
@@ -552,6 +584,7 @@ function wireEvents() {
 
 function render() {
   renderCategoryControls();
+  renderFilters();
   syncCustomCategoryInput();
   syncEditCustomCategoryInput();
   renderRows();
