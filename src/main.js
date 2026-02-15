@@ -64,6 +64,7 @@ const NAME_COLLATOR = new Intl.Collator(undefined, {
 const summaryEl = document.querySelector("#summary");
 const itemsBody = document.querySelector("#items-body");
 const rowTemplate = document.querySelector("#row-template");
+const addSection = document.querySelector("#add-section");
 const newItemForm = document.querySelector("#new-item-form");
 const formMessage = document.querySelector("#form-message");
 const newNameInput = document.querySelector("#new-name");
@@ -81,13 +82,12 @@ const editCustomCategoryWrap = document.querySelector("#edit-custom-category-wra
 const editCustomCategoryInput = document.querySelector("#edit-custom-category");
 const cancelEditButton = document.querySelector("#cancel-edit");
 const editMessage = document.querySelector("#edit-message");
-const undoToast = document.querySelector("#undo-toast");
-const undoText = document.querySelector("#undo-text");
-const undoButton = document.querySelector("#undo-button");
+const searchInput = document.querySelector("#search-input");
+const fabAddButton = document.querySelector("#fab-add-button");
 
 let state = loadState();
 let editingItemId = null;
-let pendingRemoval = null;
+let searchQuery = "";
 
 function createId() {
   return globalThis.crypto?.randomUUID
@@ -196,23 +196,46 @@ function allCategories() {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-function filteredAndSortedItems() {
-  let list = state.items.slice();
-  list.sort((a, b) => {
-    const byName = NAME_COLLATOR.compare(a.name.trim(), b.name.trim());
-    if (byName !== 0) {
-      return byName;
-    }
+function getFilteredItems() {
+  const query = searchQuery.trim().toLowerCase();
 
-    const byCategory = NAME_COLLATOR.compare(a.category.trim(), b.category.trim());
-    if (byCategory !== 0) {
-      return byCategory;
-    }
+  if (!query) {
+    return state.items.slice();
+  }
 
-    return NAME_COLLATOR.compare(a.id, b.id);
+  return state.items.filter((item) => {
+    const name = item.name.toLowerCase();
+    const category = item.category.toLowerCase();
+    return name.includes(query) || category.includes(query);
   });
+}
 
-  return list;
+function groupedItems() {
+  const grouped = new Map();
+
+  for (const item of getFilteredItems()) {
+    const category = item.category;
+    if (!grouped.has(category)) {
+      grouped.set(category, []);
+    }
+    grouped.get(category).push(item);
+  }
+
+  const sortedCategories = [...grouped.keys()].sort((a, b) =>
+    NAME_COLLATOR.compare(a, b)
+  );
+
+  return sortedCategories.map((category) => {
+    const items = grouped.get(category).slice().sort((a, b) => {
+      const byName = NAME_COLLATOR.compare(a.name.trim(), b.name.trim());
+      if (byName !== 0) {
+        return byName;
+      }
+      return NAME_COLLATOR.compare(a.id, b.id);
+    });
+
+    return { category, items };
+  });
 }
 
 function populateCategorySelect(select, previousValue) {
@@ -254,64 +277,75 @@ function renderSummary() {
 }
 
 function renderRows() {
-  const list = filteredAndSortedItems();
+  const groups = groupedItems();
   itemsBody.innerHTML = "";
 
-  if (list.length === 0) {
+  if (groups.length === 0) {
     const emptyState = document.createElement("p");
     emptyState.className = "empty-state";
-    emptyState.textContent = "No items yet. Add your first cupboard item below.";
+    emptyState.textContent = searchQuery
+      ? "No items match your search."
+      : "No items yet. Add your first cupboard item below.";
     itemsBody.append(emptyState);
     renderSummary();
     return;
   }
 
-  for (const item of list) {
-    const node = rowTemplate.content.firstElementChild.cloneNode(true);
+  for (const group of groups) {
+    const section = document.createElement("section");
+    section.className = "category-section";
 
-    const nameCell = node.querySelector('[data-field="name"]');
-    const categoryCell = node.querySelector('[data-field="category"]');
-    const qtyInput = node.querySelector('[data-field="quantity"]');
-    const statusCell = node.querySelector('[data-field="status"]');
-    const editButton = node.querySelector('[data-action="edit"]');
-    const deleteButton = node.querySelector('[data-action="delete"]');
+    const header = document.createElement("div");
+    header.className = "category-header";
 
-    nameCell.textContent = item.name;
-    categoryCell.textContent = item.category;
-    qtyInput.value = item.quantity;
-    statusCell.textContent = statusText(item);
-    node.classList.toggle("low", isLow(item));
-    if (!hasValidLevels(item)) {
-      statusCell.className = "item-status status-warn";
-    } else {
-      statusCell.className = isLow(item)
-        ? "item-status status-low"
-        : "item-status status-ok";
-    }
+    const title = document.createElement("span");
+    title.textContent = group.category;
 
-    qtyInput.addEventListener("change", () => {
-      item.quantity = qtyInput.value.trim();
-      saveState();
-      render();
-    });
+    const count = document.createElement("span");
+    count.className = "category-count";
+    count.textContent = `${group.items.length} item${group.items.length === 1 ? "" : "s"}`;
 
-    editButton.addEventListener("click", () => {
-      openEditDialog(item.id);
-    });
+    header.append(title, count);
 
-    deleteButton.addEventListener("click", () => {
-      const index = state.items.findIndex((entry) => entry.id === item.id);
-      if (index === -1) {
-        return;
+    const listNode = document.createElement("div");
+    listNode.className = "items-list";
+    listNode.setAttribute("role", "list");
+
+    for (const item of group.items) {
+      const node = rowTemplate.content.firstElementChild.cloneNode(true);
+
+      const nameCell = node.querySelector('[data-field="name"]');
+      const qtyInput = node.querySelector('[data-field="quantity"]');
+      const statusCell = node.querySelector('[data-field="status"]');
+      const editButton = node.querySelector('[data-action="edit"]');
+
+      nameCell.textContent = item.name;
+      qtyInput.value = item.quantity;
+      statusCell.textContent = statusText(item);
+      node.classList.toggle("low", isLow(item));
+      if (!hasValidLevels(item)) {
+        statusCell.className = "item-status status-warn";
+      } else {
+        statusCell.className = isLow(item)
+          ? "item-status status-low"
+          : "item-status status-ok";
       }
 
-      const [removedItem] = state.items.splice(index, 1);
-      saveState();
-      render();
-      queueRemovalUndo(removedItem, index);
-    });
+      qtyInput.addEventListener("change", () => {
+        item.quantity = qtyInput.value.trim();
+        saveState();
+        render();
+      });
 
-    itemsBody.append(node);
+      editButton.addEventListener("click", () => {
+        openEditDialog(item.id);
+      });
+
+      listNode.append(node);
+    }
+
+    section.append(header, listNode);
+    itemsBody.append(section);
   }
 
   renderSummary();
@@ -320,58 +354,6 @@ function renderRows() {
 function setFormMessage(message, tone = "ok") {
   formMessage.textContent = message;
   formMessage.dataset.tone = tone;
-}
-
-function hideUndoToast() {
-  undoToast.classList.remove("show");
-  undoToast.setAttribute("aria-hidden", "true");
-}
-
-function dismissPendingRemoval() {
-  if (!pendingRemoval) {
-    return;
-  }
-
-  window.clearTimeout(pendingRemoval.timerId);
-  pendingRemoval = null;
-  hideUndoToast();
-}
-
-function queueRemovalUndo(item, index) {
-  dismissPendingRemoval();
-
-  undoText.textContent = `Removed ${item.name}.`;
-  undoToast.classList.add("show");
-  undoToast.setAttribute("aria-hidden", "false");
-
-  const timerId = window.setTimeout(() => {
-    pendingRemoval = null;
-    hideUndoToast();
-  }, 5000);
-
-  pendingRemoval = {
-    item,
-    index,
-    timerId
-  };
-}
-
-function undoLastRemoval() {
-  if (!pendingRemoval) {
-    return;
-  }
-
-  const { item, index, timerId } = pendingRemoval;
-  window.clearTimeout(timerId);
-  pendingRemoval = null;
-
-  const safeIndex = Math.max(0, Math.min(index, state.items.length));
-  state.items.splice(safeIndex, 0, item);
-
-  saveState();
-  hideUndoToast();
-  render();
-  setFormMessage(`Restored ${item.name}.`, "ok");
 }
 
 function syncCustomCategoryInput() {
@@ -543,12 +525,21 @@ function addItemFromForm(event) {
 }
 
 function wireEvents() {
+  searchInput.addEventListener("input", () => {
+    searchQuery = searchInput.value;
+    renderRows();
+  });
+  fabAddButton.addEventListener("click", () => {
+    addSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => {
+      newNameInput.focus();
+    }, 200);
+  });
   newCategorySelect.addEventListener("change", syncCustomCategoryInput);
   newItemForm.addEventListener("submit", addItemFromForm);
   editCategorySelect.addEventListener("change", syncEditCustomCategoryInput);
   editItemForm.addEventListener("submit", saveEditedItem);
   cancelEditButton.addEventListener("click", closeEditDialog);
-  undoButton.addEventListener("click", undoLastRemoval);
   editDialog.addEventListener("cancel", () => {
     editingItemId = null;
   });
@@ -569,5 +560,4 @@ function render() {
 newLowLevelInput.value = DEFAULT_LOW_LEVEL;
 wireEvents();
 render();
-hideUndoToast();
 setFormMessage("Ready.");

@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cupboard List</title>
-    <script type="module" crossorigin src="./assets/index-BZ_f4TAL.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Crr1If0W.css">
+    <script type="module" crossorigin src="./assets/index-BX7G1Z7z.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Be7tCKUO.css">
   </head>
   <body>
     <main class="app" id="app">
@@ -18,10 +18,10 @@
       </header>
 
       <section class="list-wrap">
-        <div id="items-body" class="items-list" role="list"></div>
+        <div id="items-body"></div>
       </section>
 
-      <section class="card add-form">
+      <section class="card add-form" id="add-section">
         <h2>Add New Item</h2>
         <form id="new-item-form" novalidate>
           <div class="grid">
@@ -95,22 +95,26 @@
         <span class="item-low-dot" aria-hidden="true"></span>
         <div class="item-main">
           <p data-field="name" class="item-name"></p>
-          <p data-field="category" class="item-category"></p>
         </div>
         <div class="item-qty-wrapper">
           <input data-field="quantity" type="text" class="qty-input" aria-label="Quantity" />
         </div>
         <p data-field="status" class="item-status"></p>
         <div class="item-actions">
-          <button type="button" data-action="edit" class="item-action-btn edit-btn">Edit</button>
-          <button type="button" data-action="delete" class="item-action-btn delete-btn">Remove</button>
+          <button type="button" data-action="edit" class="item-action-btn edit-btn" aria-label="Edit item">
+            <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+              <path d="M9 2.2l2.8 2.8M2.2 9.8l5.7-5.7 2.8 2.8L5 12.6H2.2V9.8z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
         </div>
       </article>
     </template>
 
-    <div id="undo-toast" class="undo-toast" role="status" aria-live="polite" aria-hidden="true">
-      <span id="undo-text"></span>
-      <button type="button" id="undo-button" class="undo-btn">Undo</button>
+    <div class="fab-bar">
+      <div class="fab-inner">
+        <input id="search-input" class="search-input" type="text" placeholder="Search items..." />
+        <button id="fab-add-button" class="add-btn" type="button">+ Add</button>
+      </div>
     </div>
 
   </body>
