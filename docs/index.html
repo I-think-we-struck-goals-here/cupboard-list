@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cupboard List</title>
+    <script type="module" crossorigin src="./assets/index-DG0IFqyu.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BFX_Zqmq.css">
+  </head>
+  <body>
+    <main class="app" id="app">
+      <header class="header">
+        <div>
+          <p class="kicker">Home Inventory</p>
+          <h1>Cupboard List</h1>
+          <p class="subtext">Simple live list for you and your wife.</p>
+        </div>
+        <div class="summary" id="summary"></div>
+      </header>
+
+      <section class="card add-form">
+        <h2>Add New Item</h2>
+        <form id="new-item-form" novalidate>
+          <div class="grid">
+            <label>
+              Name
+              <input id="new-name" type="text" placeholder="e.g. Spaghetti" required />
+            </label>
+
+            <label>
+              Quantity
+              <input id="new-quantity" type="text" placeholder="e.g. 1" required />
+            </label>
+
+            <label>
+              Running low at
+              <input id="new-low-level" type="text" placeholder="e.g. 1" required />
+            </label>
+
+            <label>
+              Category
+              <select id="new-category-select"></select>
+            </label>
+
+            <label id="new-custom-category-wrap" class="hidden">
+              Custom category
+              <input id="new-custom-category" type="text" placeholder="Create category" />
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit">Add item</button>
+          </div>
+          <p id="form-message" class="form-message" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="card table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Quantity</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="items-body"></tbody>
+        </table>
+      </section>
+
+      <dialog id="edit-dialog" class="edit-dialog">
+        <form id="edit-item-form" class="edit-form" novalidate>
+          <h2>Edit Item</h2>
+          <div class="grid">
+            <label>
+              Name
+              <input id="edit-name" type="text" required />
+            </label>
+
+            <label>
+              Running low at
+              <input id="edit-low-level" type="text" required />
+            </label>
+
+            <label>
+              Category
+              <select id="edit-category-select"></select>
+            </label>
+
+            <label id="edit-custom-category-wrap" class="hidden">
+              Custom category
+              <input id="edit-custom-category" type="text" placeholder="Create category" />
+            </label>
+          </div>
+          <div class="actions edit-actions">
+            <button type="submit">Save changes</button>
+            <button type="button" id="cancel-edit" class="ghost-btn">Cancel</button>
+          </div>
+          <p id="edit-message" class="form-message" aria-live="polite"></p>
+        </form>
+      </dialog>
+    </main>
+
+    <template id="row-template">
+      <tr>
+        <td data-field="name" data-label="Name"></td>
+        <td data-field="category" data-label="Category"></td>
+        <td data-label="Quantity">
+          <input data-field="quantity" type="text" class="qty-input" />
+        </td>
+        <td data-field="status" data-label="Status"></td>
+        <td class="row-actions" data-label="Actions">
+          <button type="button" data-action="edit" class="edit-btn">Edit</button>
+          <button type="button" data-action="delete" class="delete-btn">Remove</button>
+        </td>
+      </tr>
+    </template>
+
+    <div id="undo-toast" class="undo-toast" role="status" aria-live="polite" aria-hidden="true">
+      <span id="undo-text"></span>
+      <button type="button" id="undo-button" class="undo-btn">Undo</button>
+    </div>
+
+  </body>
+</html>
