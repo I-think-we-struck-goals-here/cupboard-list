@@ -516,6 +516,17 @@ button {
     padding: 0 12px 30px;
   }
 
+  .edit-dialog {
+    width: calc(100% - 20px);
+    top: 42%;
+    transform: translate(-50%, -42%);
+  }
+
+  .edit-form {
+    max-height: calc(100dvh - 80px);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
   .grid {
     grid-template-columns: 1fr;
   }
