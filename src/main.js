@@ -2,6 +2,7 @@ import "./styles.css";
 
 const STORAGE_KEY = "cupboard-app-state-v1";
 const CLOUD_API_PATH = "/api/cupboard-state";
+const GITHUB_PAGES_CLOUD_API_PATH = "https://cupboard-list-site.vercel.app/api/cupboard-state";
 const CLOUD_SYNC_DELAY_MS = 450;
 const CLOUD_POLL_INTERVAL_MS = 7000;
 
@@ -112,6 +113,29 @@ let cloudLastError = "";
 let cloudPollIntervalId = null;
 let lastCloudSignature = "";
 let cloudAvailable = false;
+
+function resolveCloudApiEndpoint() {
+  const override =
+    typeof globalThis.CUPBOARD_CLOUD_API_URL === "string"
+      ? globalThis.CUPBOARD_CLOUD_API_URL.trim()
+      : "";
+  if (override) {
+    return override;
+  }
+
+  if (typeof window === "undefined") {
+    return CLOUD_API_PATH;
+  }
+
+  const host = window.location.hostname.toLowerCase();
+  if (host.endsWith(".github.io")) {
+    return GITHUB_PAGES_CLOUD_API_PATH;
+  }
+
+  return CLOUD_API_PATH;
+}
+
+const cloudApiEndpoint = resolveCloudApiEndpoint();
 
 function createId() {
   return globalThis.crypto?.randomUUID
@@ -506,7 +530,7 @@ async function cloudRequest(method, payload) {
 
   let response;
   try {
-    response = await fetch(CLOUD_API_PATH, options);
+    response = await fetch(cloudApiEndpoint, options);
   } catch {
     throw new Error("Could not reach cloud API.");
   }
