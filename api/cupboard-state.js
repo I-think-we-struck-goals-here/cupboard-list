@@ -1,6 +1,6 @@
-import { kv } from "@vercel/kv";
+import { list, put } from "@vercel/blob";
 
-const STORAGE_KEY = process.env.CUPBOARD_STATE_KEY || "cupboard:main";
+const STORAGE_PATHNAME = process.env.CUPBOARD_STATE_PATHNAME || "cupboard-state.json";
 
 function normalizeState(value) {
   const items = Array.isArray(value?.items)
@@ -53,13 +53,30 @@ function parseBody(req) {
 export default async function handler(req, res) {
   if (req.method === "GET") {
     try {
-      const existing = await kv.get(STORAGE_KEY);
-      if (!existing) {
+      const { blobs } = await list({
+        prefix: STORAGE_PATHNAME,
+        limit: 5
+      });
+
+      const target = blobs.find((blob) => blob.pathname === STORAGE_PATHNAME);
+      if (!target) {
         return sendJson(res, 200, { data: null });
       }
-      return sendJson(res, 200, { data: normalizeState(existing) });
+
+      const response = await fetch(target.url, {
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        return sendJson(res, 503, {
+          error: `Cloud storage unavailable: Failed to read blob (${response.status})`
+        });
+      }
+
+      const parsed = await response.json();
+      return sendJson(res, 200, { data: normalizeState(parsed) });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "KV not configured";
+      const message = error instanceof Error ? error.message : "Blob not configured";
       return sendJson(res, 503, { error: `Cloud storage unavailable: ${message}` });
     }
   }
@@ -75,10 +92,16 @@ export default async function handler(req, res) {
     const normalized = normalizeState(payload);
 
     try {
-      await kv.set(STORAGE_KEY, normalized);
+      await put(STORAGE_PATHNAME, JSON.stringify(normalized), {
+        access: "public",
+        allowOverwrite: true,
+        addRandomSuffix: false,
+        contentType: "application/json; charset=utf-8",
+        cacheControlMaxAge: 0
+      });
       return sendJson(res, 200, { data: normalized });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "KV not configured";
+      const message = error instanceof Error ? error.message : "Blob not configured";
       return sendJson(res, 503, { error: `Cloud storage unavailable: ${message}` });
     }
   }
