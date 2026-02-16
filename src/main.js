@@ -113,6 +113,7 @@ let cloudLastError = "";
 let cloudPollIntervalId = null;
 let lastCloudSignature = "";
 let cloudAvailable = false;
+let hasPendingLocalChanges = false;
 
 function resolveCloudApiEndpoints() {
   const override =
@@ -285,6 +286,7 @@ function saveStateLocal() {
 
 function saveState() {
   saveStateLocal();
+  hasPendingLocalChanges = true;
   scheduleCloudSync();
 }
 
@@ -583,6 +585,7 @@ async function runCloudSync() {
     const fallbackItems = normalizeInitialItems();
     const normalized = normalizeStatePayload(remotePayload, fallbackItems);
     lastCloudSignature = stateSignature(normalized);
+    hasPendingLocalChanges = false;
     cloudAvailable = true;
     cloudLastError = "";
     updateCloudBadge("synced", "Shared cloud");
@@ -610,6 +613,12 @@ function scheduleCloudSync() {
 
 async function pullCloudState(options = {}) {
   const seedIfMissing = Boolean(options.seedIfMissing);
+  const force = Boolean(options.force);
+
+  // Never allow background pulls to overwrite local edits that are queued/in-flight.
+  if (!force && (hasPendingLocalChanges || cloudSyncInFlight)) {
+    return;
+  }
 
   if (!cloudSyncInFlight) {
     updateCloudBadge("syncing", "Syncing...");
@@ -619,6 +628,11 @@ async function pullCloudState(options = {}) {
     const result = await cloudRequest("GET");
     const remotePayload = result?.data ?? null;
     cloudAvailable = true;
+
+    // A local edit may have happened while the request was in flight.
+    if (!force && (hasPendingLocalChanges || cloudSyncInFlight)) {
+      return;
+    }
 
     if (!remotePayload) {
       if (seedIfMissing) {
@@ -634,6 +648,7 @@ async function pullCloudState(options = {}) {
 
     lastCloudSignature = remoteSignature;
     cloudLastError = "";
+    hasPendingLocalChanges = false;
 
     if (remoteSignature !== localSignature) {
       state = remoteState;
@@ -659,6 +674,11 @@ function startCloudPolling() {
   }
 
   cloudPollIntervalId = window.setInterval(() => {
+    if (hasPendingLocalChanges || cloudSyncInFlight) {
+      void runCloudSync();
+      return;
+    }
+
     void pullCloudState();
   }, CLOUD_POLL_INTERVAL_MS);
 }
@@ -670,6 +690,11 @@ async function initCloud() {
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
+      if (hasPendingLocalChanges || cloudSyncInFlight) {
+        void runCloudSync();
+        return;
+      }
+
       void pullCloudState();
     }
   });
