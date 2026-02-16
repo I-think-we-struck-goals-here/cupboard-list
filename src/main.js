@@ -1,13 +1,9 @@
 import "./styles.css";
-import { createClient } from "@supabase/supabase-js";
 
 const STORAGE_KEY = "cupboard-app-state-v1";
-const CLOUD_TABLE = "shared_cupboard_state";
+const CLOUD_API_PATH = "/api/cupboard-state";
 const CLOUD_SYNC_DELAY_MS = 450;
 const CLOUD_POLL_INTERVAL_MS = 7000;
-const CLOUD_ROW_ID = import.meta.env.VITE_CLOUD_ROW_ID || "main";
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 const SEED_ITEMS = [
   { name: "Arribato rice", quantity: "1.25", category: "Grains & Pasta" },
@@ -115,11 +111,7 @@ let cloudSyncQueued = false;
 let cloudLastError = "";
 let cloudPollIntervalId = null;
 let lastCloudSignature = "";
-
-const cloudClient =
-  SUPABASE_URL && SUPABASE_ANON_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
+let cloudAvailable = false;
 
 function createId() {
   return globalThis.crypto?.randomUUID
@@ -473,22 +465,16 @@ function updateCloudBadge(mode, text) {
 }
 
 function updateCloudUI() {
-  if (!cloudClient) {
-    updateCloudBadge("", "Local only");
-    cloudSyncNowButton.disabled = true;
-    return;
-  }
-
-  cloudSyncNowButton.disabled = false;
+  cloudSyncNowButton.disabled = cloudSyncInFlight;
 
   if (cloudSyncInFlight) {
     updateCloudBadge("syncing", "Syncing...");
+  } else if (cloudAvailable) {
+    updateCloudBadge("synced", "Shared cloud");
   } else if (cloudLastError) {
     updateCloudBadge("error", "Cloud error");
-  } else if (lastCloudSignature) {
-    updateCloudBadge("synced", "Shared cloud");
   } else {
-    updateCloudBadge("", "Cloud ready");
+    updateCloudBadge("", "Local only");
   }
 }
 
@@ -506,11 +492,41 @@ function clearCloudPolling() {
   }
 }
 
-async function runCloudSync() {
-  if (!cloudClient) {
-    return;
+async function cloudRequest(method, payload) {
+  const options = {
+    method,
+    headers: {
+      "content-type": "application/json"
+    }
+  };
+
+  if (payload !== undefined) {
+    options.body = JSON.stringify(payload);
   }
 
+  let response;
+  try {
+    response = await fetch(CLOUD_API_PATH, options);
+  } catch {
+    throw new Error("Could not reach cloud API.");
+  }
+
+  let parsed = null;
+  try {
+    parsed = await response.json();
+  } catch {
+    parsed = null;
+  }
+
+  if (!response.ok) {
+    const message = parsed?.error || `Cloud API error (${response.status}).`;
+    throw new Error(message);
+  }
+
+  return parsed ?? {};
+}
+
+async function runCloudSync() {
   if (cloudSyncInFlight) {
     cloudSyncQueued = true;
     return;
@@ -521,31 +537,16 @@ async function runCloudSync() {
 
   try {
     const payload = JSON.parse(JSON.stringify(state));
-    const { data, error } = await cloudClient
-      .from(CLOUD_TABLE)
-      .upsert(
-      {
-        id: CLOUD_ROW_ID,
-        data: payload
-      },
-      {
-        onConflict: "id"
-      }
-      )
-      .select("data")
-      .single();
-
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    const remotePayload = data?.data ?? payload;
+    const result = await cloudRequest("PUT", { data: payload });
+    const remotePayload = result?.data ?? payload;
     const fallbackItems = normalizeInitialItems();
     const normalized = normalizeStatePayload(remotePayload, fallbackItems);
     lastCloudSignature = stateSignature(normalized);
+    cloudAvailable = true;
     cloudLastError = "";
     updateCloudBadge("synced", "Shared cloud");
   } catch (error) {
+    cloudAvailable = false;
     cloudLastError = error instanceof Error ? error.message : "Unknown cloud sync error";
     updateCloudBadge("error", "Cloud error");
   } finally {
@@ -559,10 +560,6 @@ async function runCloudSync() {
 }
 
 function scheduleCloudSync() {
-  if (!cloudClient) {
-    return;
-  }
-
   clearCloudTimer();
   cloudSyncTimerId = window.setTimeout(() => {
     cloudSyncTimerId = null;
@@ -571,10 +568,6 @@ function scheduleCloudSync() {
 }
 
 async function pullCloudState(options = {}) {
-  if (!cloudClient) {
-    return;
-  }
-
   const seedIfMissing = Boolean(options.seedIfMissing);
 
   if (!cloudSyncInFlight) {
@@ -582,19 +575,11 @@ async function pullCloudState(options = {}) {
   }
 
   try {
-    const { data, error } = await cloudClient
-      .from(CLOUD_TABLE)
-      .select("data")
-      .eq("id", CLOUD_ROW_ID)
-      .maybeSingle();
+    const result = await cloudRequest("GET");
+    const remotePayload = result?.data ?? null;
+    cloudAvailable = true;
 
-    if (error) {
-      cloudLastError = error.message;
-      updateCloudBadge("error", "Cloud error");
-      return;
-    }
-
-    if (!data?.data) {
+    if (!remotePayload) {
       if (seedIfMissing) {
         await runCloudSync();
       }
@@ -602,7 +587,7 @@ async function pullCloudState(options = {}) {
     }
 
     const fallbackItems = normalizeInitialItems();
-    const remoteState = normalizeStatePayload(data.data, fallbackItems);
+    const remoteState = normalizeStatePayload(remotePayload, fallbackItems);
     const remoteSignature = stateSignature(remoteState);
     const localSignature = stateSignature(state);
 
@@ -618,6 +603,7 @@ async function pullCloudState(options = {}) {
 
     updateCloudBadge("synced", "Shared cloud");
   } catch (error) {
+    cloudAvailable = false;
     const message = error instanceof Error ? error.message : "Unknown error";
     cloudLastError = message;
     updateCloudBadge("error", "Cloud error");
@@ -627,7 +613,7 @@ async function pullCloudState(options = {}) {
 }
 
 function startCloudPolling() {
-  if (!cloudClient || cloudPollIntervalId !== null) {
+  if (cloudPollIntervalId !== null) {
     return;
   }
 
@@ -638,14 +624,11 @@ function startCloudPolling() {
 
 async function initCloud() {
   updateCloudUI();
-
-  if (!cloudClient) {
-    setFormMessage("Ready. Local-only mode (cloud not configured).", "ok");
-    return;
-  }
-
   await pullCloudState({ seedIfMissing: true });
-  startCloudPolling();
+
+  if (cloudAvailable) {
+    startCloudPolling();
+  }
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
@@ -654,7 +637,7 @@ async function initCloud() {
   });
 
   window.addEventListener("beforeunload", clearCloudPolling);
-  setFormMessage("Ready. Shared cloud sync enabled.", "ok");
+  setFormMessage(cloudAvailable ? "Ready. Shared cloud sync enabled." : "Ready. Local-only mode.", "ok");
 }
 
 function clearUndoTimer() {

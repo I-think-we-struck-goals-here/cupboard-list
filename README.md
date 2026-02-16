@@ -1,6 +1,6 @@
 # Cupboard List
 
-Minimal home cupboard tracker with shared cloud sync via Supabase.
+Minimal home cupboard tracker with shared cloud sync on Vercel.
 
 ## Run locally
 
@@ -15,21 +15,20 @@ npm run dev
 npm run build
 ```
 
-## Cloud Sync Setup (Supabase)
+## Cloud Sync Setup (Vercel Only)
 
-1. Create a Supabase project.
-2. Run `supabase/cupboard_states.sql` in the SQL editor.
-3. Copy `.env.example` to `.env` and fill:
+1. In Vercel, open your project and add a Redis/KV storage integration.
+2. Ensure these server-side environment variables are present (Project -> Settings -> Environment Variables):
 
 ```bash
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_ANON_KEY=...
-VITE_CLOUD_ROW_ID=main
+KV_REST_API_URL=...
+KV_REST_API_TOKEN=...
+CUPBOARD_STATE_KEY=cupboard:main
 ```
 
-4. Restart dev/build.
+3. Redeploy production.
 
-Without env vars, the app stays local-only (current behavior).
+Without KV env vars, the app stays local-only.
 
 Notes:
 - No sign-in is required.
