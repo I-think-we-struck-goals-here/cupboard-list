@@ -307,6 +307,18 @@ h2 {
   margin-bottom: 10px;
 }
 
+.edit-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.edit-form-header h2 {
+  margin: 0;
+}
+
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -452,6 +464,10 @@ button {
 .danger-icon-btn:hover {
   border-color: rgba(196, 69, 58, 0.52);
   background: rgba(196, 69, 58, 0.14);
+}
+
+.edit-delete-btn {
+  flex-shrink: 0;
 }
 
 .form-message {
