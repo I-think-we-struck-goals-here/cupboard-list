@@ -114,28 +114,32 @@ let cloudPollIntervalId = null;
 let lastCloudSignature = "";
 let cloudAvailable = false;
 
-function resolveCloudApiEndpoint() {
+function resolveCloudApiEndpoints() {
   const override =
     typeof globalThis.CUPBOARD_CLOUD_API_URL === "string"
       ? globalThis.CUPBOARD_CLOUD_API_URL.trim()
       : "";
   if (override) {
-    return override;
+    return [override];
   }
 
   if (typeof window === "undefined") {
-    return CLOUD_API_PATH;
+    return [CLOUD_API_PATH, GITHUB_PAGES_CLOUD_API_PATH];
   }
 
   const host = window.location.hostname.toLowerCase();
+  const endpoints = [];
+
   if (host.endsWith(".github.io")) {
-    return GITHUB_PAGES_CLOUD_API_PATH;
+    endpoints.push(GITHUB_PAGES_CLOUD_API_PATH, CLOUD_API_PATH);
+  } else {
+    endpoints.push(CLOUD_API_PATH, GITHUB_PAGES_CLOUD_API_PATH);
   }
 
-  return CLOUD_API_PATH;
+  return [...new Set(endpoints)];
 }
 
-const cloudApiEndpoint = resolveCloudApiEndpoint();
+const cloudApiEndpoints = resolveCloudApiEndpoints();
 
 function createId() {
   return globalThis.crypto?.randomUUID
@@ -528,26 +532,39 @@ async function cloudRequest(method, payload) {
     options.body = JSON.stringify(payload);
   }
 
-  let response;
-  try {
-    response = await fetch(cloudApiEndpoint, options);
-  } catch {
-    throw new Error("Could not reach cloud API.");
-  }
+  let lastError = null;
 
-  let parsed = null;
-  try {
-    parsed = await response.json();
-  } catch {
-    parsed = null;
-  }
+  for (const endpoint of cloudApiEndpoints) {
+    let response;
+    try {
+      response = await fetch(endpoint, options);
+    } catch {
+      lastError = new Error("Could not reach cloud API.");
+      continue;
+    }
 
-  if (!response.ok) {
+    let parsed = null;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = null;
+    }
+
+    if (response.ok) {
+      return parsed ?? {};
+    }
+
     const message = parsed?.error || `Cloud API error (${response.status}).`;
-    throw new Error(message);
+    lastError = new Error(message);
+
+    if (response.status === 404 || response.status === 405) {
+      continue;
+    }
+
+    throw lastError;
   }
 
-  return parsed ?? {};
+  throw lastError || new Error("Could not reach cloud API.");
 }
 
 async function runCloudSync() {
@@ -649,10 +666,7 @@ function startCloudPolling() {
 async function initCloud() {
   updateCloudUI();
   await pullCloudState({ seedIfMissing: true });
-
-  if (cloudAvailable) {
-    startCloudPolling();
-  }
+  startCloudPolling();
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
