@@ -1,6 +1,13 @@
 import "./styles.css";
+import { createClient } from "@supabase/supabase-js";
 
 const STORAGE_KEY = "cupboard-app-state-v1";
+const CLOUD_TABLE = "shared_cupboard_state";
+const CLOUD_SYNC_DELAY_MS = 450;
+const CLOUD_POLL_INTERVAL_MS = 7000;
+const CLOUD_ROW_ID = import.meta.env.VITE_CLOUD_ROW_ID || "main";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 const SEED_ITEMS = [
   { name: "Arribato rice", quantity: "1.25", category: "Grains & Pasta" },
@@ -92,6 +99,8 @@ const undoToastMessage = document.querySelector("#undo-toast-message");
 const undoDeleteButton = document.querySelector("#undo-delete-button");
 const searchInput = document.querySelector("#search-input");
 const topAddButton = document.querySelector("#top-add-button");
+const cloudStatusBadge = document.querySelector("#cloud-status-badge");
+const cloudSyncNowButton = document.querySelector("#cloud-sync-now-button");
 
 let state = loadState();
 let editingItemId = null;
@@ -100,6 +109,17 @@ let searchOpen = false;
 let activeFilter = "all";
 let pendingDeletedItem = null;
 let undoTimerId = null;
+let cloudSyncTimerId = null;
+let cloudSyncInFlight = false;
+let cloudSyncQueued = false;
+let cloudLastError = "";
+let cloudPollIntervalId = null;
+let lastCloudSignature = "";
+
+const cloudClient =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
 
 function createId() {
   return globalThis.crypto?.randomUUID
@@ -162,6 +182,60 @@ function baseCategories(items) {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
+function normalizeStatePayload(parsed, fallbackItems) {
+  const items = Array.isArray(parsed?.items)
+    ? parsed.items
+        .filter((item) => item && item.name && item.category)
+        .map((item) => ({
+          id: item.id || createId(),
+          name: String(item.name).trim(),
+          quantity: String(item.quantity ?? ""),
+          lowLevel: String(item.lowLevel ?? DEFAULT_LOW_LEVEL),
+          category: String(item.category).trim()
+        }))
+    : fallbackItems;
+
+  const customCategories = Array.isArray(parsed?.customCategories)
+    ? parsed.customCategories.map((category) => String(category).trim()).filter(Boolean)
+    : [];
+
+  return {
+    items,
+    customCategories
+  };
+}
+
+function stateSignature(sourceState) {
+  const items = sourceState.items
+    .map((item) => ({
+      id: String(item.id),
+      name: String(item.name),
+      quantity: String(item.quantity),
+      lowLevel: String(item.lowLevel),
+      category: String(item.category)
+    }))
+    .sort((a, b) => {
+      const byId = NAME_COLLATOR.compare(a.id, b.id);
+      if (byId !== 0) {
+        return byId;
+      }
+      const byName = NAME_COLLATOR.compare(a.name, b.name);
+      if (byName !== 0) {
+        return byName;
+      }
+      return NAME_COLLATOR.compare(a.category, b.category);
+    });
+
+  const customCategories = [...sourceState.customCategories].sort((a, b) =>
+    NAME_COLLATOR.compare(a, b)
+  );
+
+  return JSON.stringify({
+    items,
+    customCategories
+  });
+}
+
 function loadState() {
   const fallbackItems = normalizeInitialItems();
   const fallbackCategories = baseCategories(fallbackItems);
@@ -176,26 +250,7 @@ function loadState() {
     }
 
     const parsed = JSON.parse(raw);
-    const items = Array.isArray(parsed.items)
-      ? parsed.items
-          .filter((item) => item && item.name && item.category)
-          .map((item) => ({
-            id: item.id || createId(),
-            name: String(item.name).trim(),
-            quantity: String(item.quantity ?? ""),
-            lowLevel: String(item.lowLevel ?? DEFAULT_LOW_LEVEL),
-            category: String(item.category).trim()
-          }))
-      : fallbackItems;
-
-    const customCategories = Array.isArray(parsed.customCategories)
-      ? parsed.customCategories.map((category) => String(category).trim()).filter(Boolean)
-      : [];
-
-    return {
-      items,
-      customCategories
-    };
+    return normalizeStatePayload(parsed, fallbackItems);
   } catch {
     return {
       items: fallbackItems,
@@ -204,8 +259,13 @@ function loadState() {
   }
 }
 
-function saveState() {
+function saveStateLocal() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function saveState() {
+  saveStateLocal();
+  scheduleCloudSync();
 }
 
 function allCategories() {
@@ -402,6 +462,199 @@ function renderRows() {
 function setFormMessage(message, tone = "ok") {
   formMessage.textContent = message;
   formMessage.dataset.tone = tone;
+}
+
+function updateCloudBadge(mode, text) {
+  cloudStatusBadge.classList.remove("syncing", "synced", "error");
+  if (mode) {
+    cloudStatusBadge.classList.add(mode);
+  }
+  cloudStatusBadge.textContent = text;
+}
+
+function updateCloudUI() {
+  if (!cloudClient) {
+    updateCloudBadge("", "Local only");
+    cloudSyncNowButton.disabled = true;
+    return;
+  }
+
+  cloudSyncNowButton.disabled = false;
+
+  if (cloudSyncInFlight) {
+    updateCloudBadge("syncing", "Syncing...");
+  } else if (cloudLastError) {
+    updateCloudBadge("error", "Cloud error");
+  } else if (lastCloudSignature) {
+    updateCloudBadge("synced", "Shared cloud");
+  } else {
+    updateCloudBadge("", "Cloud ready");
+  }
+}
+
+function clearCloudTimer() {
+  if (cloudSyncTimerId !== null) {
+    window.clearTimeout(cloudSyncTimerId);
+    cloudSyncTimerId = null;
+  }
+}
+
+function clearCloudPolling() {
+  if (cloudPollIntervalId !== null) {
+    window.clearInterval(cloudPollIntervalId);
+    cloudPollIntervalId = null;
+  }
+}
+
+async function runCloudSync() {
+  if (!cloudClient) {
+    return;
+  }
+
+  if (cloudSyncInFlight) {
+    cloudSyncQueued = true;
+    return;
+  }
+
+  cloudSyncInFlight = true;
+  updateCloudUI();
+
+  try {
+    const payload = JSON.parse(JSON.stringify(state));
+    const { data, error } = await cloudClient
+      .from(CLOUD_TABLE)
+      .upsert(
+      {
+        id: CLOUD_ROW_ID,
+        data: payload
+      },
+      {
+        onConflict: "id"
+      }
+      )
+      .select("data")
+      .single();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const remotePayload = data?.data ?? payload;
+    const fallbackItems = normalizeInitialItems();
+    const normalized = normalizeStatePayload(remotePayload, fallbackItems);
+    lastCloudSignature = stateSignature(normalized);
+    cloudLastError = "";
+    updateCloudBadge("synced", "Shared cloud");
+  } catch (error) {
+    cloudLastError = error instanceof Error ? error.message : "Unknown cloud sync error";
+    updateCloudBadge("error", "Cloud error");
+  } finally {
+    cloudSyncInFlight = false;
+    updateCloudUI();
+    if (cloudSyncQueued) {
+      cloudSyncQueued = false;
+      scheduleCloudSync();
+    }
+  }
+}
+
+function scheduleCloudSync() {
+  if (!cloudClient) {
+    return;
+  }
+
+  clearCloudTimer();
+  cloudSyncTimerId = window.setTimeout(() => {
+    cloudSyncTimerId = null;
+    void runCloudSync();
+  }, CLOUD_SYNC_DELAY_MS);
+}
+
+async function pullCloudState(options = {}) {
+  if (!cloudClient) {
+    return;
+  }
+
+  const seedIfMissing = Boolean(options.seedIfMissing);
+
+  if (!cloudSyncInFlight) {
+    updateCloudBadge("syncing", "Syncing...");
+  }
+
+  try {
+    const { data, error } = await cloudClient
+      .from(CLOUD_TABLE)
+      .select("data")
+      .eq("id", CLOUD_ROW_ID)
+      .maybeSingle();
+
+    if (error) {
+      cloudLastError = error.message;
+      updateCloudBadge("error", "Cloud error");
+      return;
+    }
+
+    if (!data?.data) {
+      if (seedIfMissing) {
+        await runCloudSync();
+      }
+      return;
+    }
+
+    const fallbackItems = normalizeInitialItems();
+    const remoteState = normalizeStatePayload(data.data, fallbackItems);
+    const remoteSignature = stateSignature(remoteState);
+    const localSignature = stateSignature(state);
+
+    lastCloudSignature = remoteSignature;
+    cloudLastError = "";
+
+    if (remoteSignature !== localSignature) {
+      state = remoteState;
+      saveStateLocal();
+      render();
+      setFormMessage("Updated from shared cloud.", "ok");
+    }
+
+    updateCloudBadge("synced", "Shared cloud");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    cloudLastError = message;
+    updateCloudBadge("error", "Cloud error");
+  } finally {
+    updateCloudUI();
+  }
+}
+
+function startCloudPolling() {
+  if (!cloudClient || cloudPollIntervalId !== null) {
+    return;
+  }
+
+  cloudPollIntervalId = window.setInterval(() => {
+    void pullCloudState();
+  }, CLOUD_POLL_INTERVAL_MS);
+}
+
+async function initCloud() {
+  updateCloudUI();
+
+  if (!cloudClient) {
+    setFormMessage("Ready. Local-only mode (cloud not configured).", "ok");
+    return;
+  }
+
+  await pullCloudState({ seedIfMissing: true });
+  startCloudPolling();
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void pullCloudState();
+    }
+  });
+
+  window.addEventListener("beforeunload", clearCloudPolling);
+  setFormMessage("Ready. Shared cloud sync enabled.", "ok");
 }
 
 function clearUndoTimer() {
@@ -700,6 +953,9 @@ function wireEvents() {
       newNameInput.focus();
     }, 200);
   });
+  cloudSyncNowButton.addEventListener("click", () => {
+    void runCloudSync();
+  });
   newCategorySelect.addEventListener("change", syncCustomCategoryInput);
   newItemForm.addEventListener("submit", addItemFromForm);
   editCategorySelect.addEventListener("change", syncEditCustomCategoryInput);
@@ -730,3 +986,4 @@ newLowLevelInput.value = NEW_ITEM_DEFAULT_LOW_LEVEL;
 wireEvents();
 render();
 setFormMessage("Ready.");
+void initCloud();

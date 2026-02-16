@@ -60,6 +60,62 @@ body {
   gap: 6px;
 }
 
+.cloud-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.cloud-status-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  background: var(--surface);
+}
+
+.cloud-status-badge.syncing {
+  border-color: var(--text-dim);
+  color: var(--text-mid);
+}
+
+.cloud-status-badge.synced {
+  border-color: rgba(58, 125, 68, 0.35);
+  color: var(--green);
+}
+
+.cloud-status-badge.error {
+  border-color: rgba(196, 69, 58, 0.35);
+  color: var(--red);
+}
+
+.cloud-sync-now-button {
+  border: none;
+  background: transparent;
+  color: var(--text-mid);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.cloud-sync-now-button:hover {
+  color: var(--text);
+}
+
+.cloud-sync-now-button:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
 .icon-btn {
   width: 32px;
   height: 32px;

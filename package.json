@@ -13,5 +13,8 @@
   "type": "module",
   "devDependencies": {
     "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.58.0"
   }
 }
