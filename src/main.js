@@ -47,6 +47,7 @@ const SEED_ITEMS = [
 ];
 
 const DEFAULT_LOW_LEVEL = "1";
+const NEW_ITEM_DEFAULT_LOW_LEVEL = "0";
 const BUILTIN_CATEGORIES = [
   "Canned Goods",
   "Grains & Pasta",
@@ -83,8 +84,12 @@ const editLowLevelInput = document.querySelector("#edit-low-level");
 const editCategorySelect = document.querySelector("#edit-category-select");
 const editCustomCategoryWrap = document.querySelector("#edit-custom-category-wrap");
 const editCustomCategoryInput = document.querySelector("#edit-custom-category");
+const deleteItemButton = document.querySelector("#delete-item-button");
 const cancelEditButton = document.querySelector("#cancel-edit");
 const editMessage = document.querySelector("#edit-message");
+const undoToast = document.querySelector("#undo-toast");
+const undoToastMessage = document.querySelector("#undo-toast-message");
+const undoDeleteButton = document.querySelector("#undo-delete-button");
 const searchInput = document.querySelector("#search-input");
 const topAddButton = document.querySelector("#top-add-button");
 
@@ -93,6 +98,8 @@ let editingItemId = null;
 let searchQuery = "";
 let searchOpen = false;
 let activeFilter = "all";
+let pendingDeletedItem = null;
+let undoTimerId = null;
 
 function createId() {
   return globalThis.crypto?.randomUUID
@@ -397,6 +404,51 @@ function setFormMessage(message, tone = "ok") {
   formMessage.dataset.tone = tone;
 }
 
+function clearUndoTimer() {
+  if (undoTimerId !== null) {
+    window.clearTimeout(undoTimerId);
+    undoTimerId = null;
+  }
+}
+
+function hideUndoToast(clearPending = true) {
+  clearUndoTimer();
+  undoToast.classList.remove("open");
+  if (clearPending) {
+    pendingDeletedItem = null;
+  }
+}
+
+function showUndoToast(item, index) {
+  hideUndoToast(false);
+  pendingDeletedItem = { item, index };
+  undoToastMessage.textContent = `Removed ${item.name}.`;
+  undoToast.classList.add("open");
+  undoTimerId = window.setTimeout(() => {
+    hideUndoToast(true);
+  }, 3000);
+}
+
+function restoreDeletedItem() {
+  if (!pendingDeletedItem) {
+    return;
+  }
+
+  const { item, index } = pendingDeletedItem;
+  const insertAt = Math.max(0, Math.min(index, state.items.length));
+  state.items.splice(insertAt, 0, item);
+
+  if (!BUILTIN_CATEGORIES.includes(item.category) && !state.customCategories.includes(item.category)) {
+    state.customCategories.push(item.category);
+    state.customCategories.sort((a, b) => a.localeCompare(b));
+  }
+
+  saveState();
+  hideUndoToast(true);
+  render();
+  setFormMessage(`Restored ${item.name}.`, "ok");
+}
+
 function syncSearchUI() {
   const hasQuery = searchQuery.trim().length > 0;
   searchPanel.classList.toggle("open", searchOpen);
@@ -534,6 +586,25 @@ function saveEditedItem(event) {
   setFormMessage(`Updated ${name}.`, "ok");
 }
 
+function deleteEditingItem() {
+  if (!editingItemId) {
+    return;
+  }
+
+  const itemIndex = state.items.findIndex((entry) => entry.id === editingItemId);
+  if (itemIndex < 0) {
+    closeEditDialog();
+    return;
+  }
+
+  const [removedItem] = state.items.splice(itemIndex, 1);
+  saveState();
+  closeEditDialog();
+  render();
+  showUndoToast(removedItem, itemIndex);
+  setFormMessage(`Removed ${removedItem.name}.`, "ok");
+}
+
 function addItemFromForm(event) {
   event.preventDefault();
 
@@ -584,7 +655,7 @@ function addItemFromForm(event) {
   render();
 
   newItemForm.reset();
-  newLowLevelInput.value = DEFAULT_LOW_LEVEL;
+  newLowLevelInput.value = NEW_ITEM_DEFAULT_LOW_LEVEL;
   newCategorySelect.value = category;
   syncCustomCategoryInput();
   setFormMessage(`Added ${name}.`, "ok");
@@ -632,8 +703,10 @@ function wireEvents() {
   newCategorySelect.addEventListener("change", syncCustomCategoryInput);
   newItemForm.addEventListener("submit", addItemFromForm);
   editCategorySelect.addEventListener("change", syncEditCustomCategoryInput);
+  deleteItemButton.addEventListener("click", deleteEditingItem);
   editItemForm.addEventListener("submit", saveEditedItem);
   cancelEditButton.addEventListener("click", closeEditDialog);
+  undoDeleteButton.addEventListener("click", restoreDeletedItem);
   editDialog.addEventListener("cancel", () => {
     editingItemId = null;
   });
@@ -653,7 +726,7 @@ function render() {
   syncSearchUI();
 }
 
-newLowLevelInput.value = DEFAULT_LOW_LEVEL;
+newLowLevelInput.value = NEW_ITEM_DEFAULT_LOW_LEVEL;
 wireEvents();
 render();
 setFormMessage("Ready.");
