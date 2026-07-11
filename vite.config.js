@@ -17,12 +17,10 @@ function optimiseTournamentSync() {
       }
       html = html.replace(oldRequest, newRequest);
 
-      const oldPoll = "setInterval(()=>{if(!document.hidden&&S.saving.size===0)load()},8000)";
-      const newPoll = "setInterval(()=>{if(!document.hidden&&S.saving.size===0)load()},10000)";
-      if (!html.includes(oldPoll)) {
+      const expectedPoll = "setInterval(()=>{if(!document.hidden&&S.saving.size===0)load()},30000)";
+      if (!html.includes(expectedPoll)) {
         throw new Error("Tournament polling interval changed, polling optimisation was not applied.");
       }
-      html = html.replace(oldPoll, newPoll);
 
       await writeFile(file, html);
     },
