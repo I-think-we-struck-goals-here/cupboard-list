@@ -154,9 +154,12 @@ function delay(attempt) {
 }
 
 function isPreconditionFailure(error) {
+  const message = String(error?.message || "").toLowerCase();
   return error instanceof BlobPreconditionFailedError ||
     error?.name === "BlobPreconditionFailedError" ||
-    error?.status === 412 || error?.statusCode === 412;
+    error?.status === 412 || error?.statusCode === 412 ||
+    message.includes("conditional request cannot succeed") ||
+    message.includes("conflicting operation against this resource");
 }
 
 function isAlreadyExists(error) {
