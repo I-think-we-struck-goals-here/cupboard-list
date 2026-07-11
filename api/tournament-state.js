@@ -6,8 +6,7 @@ import {
 } from "@vercel/blob";
 
 const STORAGE_PATHNAME = "pool-pingpong-tournament-state.json";
-const SELF_TEST_TOKEN = "7d4c998b-f310-4c39-9f4f-3e49caa9bd17";
-const MAX_WRITE_ATTEMPTS = 12;
+const MAX_WRITE_ATTEMPTS = 16;
 
 const PLAYERS = [
   "Zac",
@@ -157,12 +156,13 @@ function normalizeScores(value) {
     const p2 = leagueFixture ? leagueFixture.p2 : String(raw.p2 || "").trim();
     if (!PLAYERS.includes(p1) || !PLAYERS.includes(p2) || p1 === p2) continue;
 
+    const enteredBy = String(raw.entered_by || "Guest").slice(0, 80);
     scores[id] = {
       p1_score: p1Score,
       p2_score: p2Score,
       p1,
       p2,
-      entered_by: String(raw.entered_by || "Guest").slice(0, 80),
+      entered_by: PLAYERS.includes(enteredBy) || enteredBy === "Guest" ? enteredBy : "Guest",
       updated_at: String(raw.updated_at || new Date(0).toISOString()),
     };
   }
@@ -232,13 +232,17 @@ function isPreconditionFailure(error) {
   );
 }
 
+function isCreateCollision(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("already exists") || message.includes("allowoverwrite");
+}
+
 function waitForRetry(attempt) {
-  const delay = Math.min(250, 12 * 2 ** attempt) + Math.floor(Math.random() * 18);
+  const delay = Math.min(300, 20 * 2 ** Math.min(attempt, 4)) + Math.floor(Math.random() * 30);
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 async function writeState(pathname, state, etag) {
-  const payload = JSON.stringify(state);
   const common = {
     access: "public",
     addRandomSuffix: false,
@@ -247,14 +251,14 @@ async function writeState(pathname, state, etag) {
   };
 
   if (etag) {
-    return put(pathname, payload, {
+    return put(pathname, JSON.stringify(state), {
       ...common,
       allowOverwrite: true,
       ifMatch: etag,
     });
   }
 
-  return put(pathname, payload, {
+  return put(pathname, JSON.stringify(state), {
     ...common,
     allowOverwrite: false,
   });
@@ -265,28 +269,16 @@ async function mutateState(mutator, pathname = STORAGE_PATHNAME) {
     const { state: current, etag } = await readState(pathname);
     const draft = cloneState(current);
     const result = mutator(draft);
-    const now = new Date().toISOString();
     draft.version = current.version + 1;
-    draft.updated_at = now;
+    draft.updated_at = new Date().toISOString();
 
     try {
       await writeState(pathname, draft, etag);
       return { state: draft, result };
     } catch (error) {
-      if (etag && isPreconditionFailure(error)) {
-        await waitForRetry(attempt);
-        continue;
-      }
-
-      if (!etag) {
-        const after = await readState(pathname);
-        if (after.etag) {
-          await waitForRetry(attempt);
-          continue;
-        }
-      }
-
-      throw error;
+      const concurrentWrite = isPreconditionFailure(error) || (!etag && isCreateCollision(error));
+      if (!concurrentWrite) throw error;
+      await waitForRetry(attempt);
     }
   }
 
@@ -407,9 +399,7 @@ function clearDependants(scores, id) {
 function applyOperation(state, body) {
   const action = body?.action;
   const fixtureId = String(body?.fixture_id || "");
-  if (!VALID_IDS.has(fixtureId)) {
-    throw new TypeError("Unknown fixture.");
-  }
+  if (!VALID_IDS.has(fixtureId)) throw new TypeError("Unknown fixture.");
 
   const currentScore = state.scores[fixtureId];
   assertExpectedVersion(currentScore, body?.expected_updated_at);
@@ -420,18 +410,14 @@ function applyOperation(state, body) {
     return { action, fixture_id: fixtureId, invalidated };
   }
 
-  if (action !== "save") {
-    throw new TypeError("Unknown action.");
-  }
+  if (action !== "save") throw new TypeError("Unknown action.");
 
   const p1Score = validWholeScore(body?.p1_score);
   const p2Score = validWholeScore(body?.p2_score);
   if (p1Score === null || p2Score === null) {
     throw new TypeError("Enter valid whole-number scores between 0 and 999.");
   }
-  if (p1Score === p2Score) {
-    throw new TypeError("Matches cannot end in a draw.");
-  }
+  if (p1Score === p2Score) throw new TypeError("Matches cannot end in a draw.");
 
   const leagueFixture = FIXTURE_BY_ID.get(fixtureId);
   let pair;
@@ -448,12 +434,13 @@ function applyOperation(state, body) {
   }
 
   const invalidated = clearDependants(state.scores, fixtureId);
+  const submittedBy = String(body?.entered_by || "Guest").slice(0, 80);
   state.scores[fixtureId] = {
     p1_score: p1Score,
     p2_score: p2Score,
     p1: pair[0],
     p2: pair[1],
-    entered_by: String(body?.entered_by || "Guest").slice(0, 80),
+    entered_by: PLAYERS.includes(submittedBy) || submittedBy === "Guest" ? submittedBy : "Guest",
     updated_at: new Date().toISOString(),
   };
 
@@ -473,8 +460,8 @@ async function runSelfTest() {
   const checks = {};
 
   try {
-    const distinctIds = FIXTURES.pool.slice(0, 8).map((fixture) => fixture.id);
-    const distinct = await Promise.all(
+    const distinctIds = FIXTURES.pool.slice(0, 10).map((fixture) => fixture.id);
+    const distinctResults = await Promise.allSettled(
       distinctIds.map((fixtureId, index) =>
         mutateState(
           (state) =>
@@ -484,7 +471,7 @@ async function runSelfTest() {
               p1_score: index + 1,
               p2_score: 0,
               expected_updated_at: null,
-              entered_by: "Concurrency audit",
+              entered_by: "Guest",
             }),
           pathname,
         ),
@@ -492,10 +479,10 @@ async function runSelfTest() {
     );
     const afterDistinct = await readState(pathname);
     checks.concurrent_distinct_writes =
-      distinct.length === distinctIds.length &&
+      distinctResults.every((result) => result.status === "fulfilled") &&
       distinctIds.every((id) => Boolean(afterDistinct.state.scores[id]));
 
-    const conflictId = "pool-9";
+    const conflictId = "pool-11";
     const initialConflict = await mutateState(
       (state) =>
         applyOperation(state, {
@@ -504,7 +491,7 @@ async function runSelfTest() {
           p1_score: 1,
           p2_score: 0,
           expected_updated_at: null,
-          entered_by: "Concurrency audit",
+          entered_by: "Guest",
         }),
       pathname,
     );
@@ -518,7 +505,7 @@ async function runSelfTest() {
             p1_score: 2,
             p2_score: 0,
             expected_updated_at: baseStamp,
-            entered_by: "Audit A",
+            entered_by: "Guest",
           }),
         pathname,
       ),
@@ -530,7 +517,7 @@ async function runSelfTest() {
             p1_score: 3,
             p2_score: 0,
             expected_updated_at: baseStamp,
-            entered_by: "Audit B",
+            entered_by: "Guest",
           }),
         pathname,
       ),
@@ -541,9 +528,25 @@ async function runSelfTest() {
         (result) => result.status === "rejected" && result.reason?.name === "ScoreConflictError",
       ).length === 1;
 
+    let staleDeleteRejected = false;
+    try {
+      await mutateState(
+        (state) =>
+          applyOperation(state, {
+            action: "delete",
+            fixture_id: conflictId,
+            expected_updated_at: baseStamp,
+          }),
+        pathname,
+      );
+    } catch (error) {
+      staleDeleteRejected = error?.name === "ScoreConflictError";
+    }
+    checks.stale_delete_rejected = staleDeleteRejected;
+
     const current = await readState(pathname);
-    const remaining = FIXTURES.pool.filter((fixture) => !current.state.scores[fixture.id]);
-    for (const fixture of remaining) {
+    for (const fixture of FIXTURES.pool) {
+      if (current.state.scores[fixture.id]) continue;
       await mutateState(
         (state) =>
           applyOperation(state, {
@@ -552,7 +555,7 @@ async function runSelfTest() {
             p1_score: 1,
             p2_score: 0,
             expected_updated_at: null,
-            entered_by: "Bracket audit",
+            entered_by: "Guest",
           }),
         pathname,
       );
@@ -562,6 +565,7 @@ async function runSelfTest() {
     const top = standingsForSport(leagueReady.state.scores, "pool")
       .slice(0, 4)
       .map((row) => row.name);
+
     const sf1 = await mutateState(
       (state) =>
         applyOperation(state, {
@@ -572,7 +576,7 @@ async function runSelfTest() {
           p1: top[0],
           p2: top[3],
           expected_updated_at: null,
-          entered_by: "Bracket audit",
+          entered_by: "Guest",
         }),
       pathname,
     );
@@ -586,7 +590,7 @@ async function runSelfTest() {
           p1: top[1],
           p2: top[2],
           expected_updated_at: null,
-          entered_by: "Bracket audit",
+          entered_by: "Guest",
         }),
       pathname,
     );
@@ -600,14 +604,13 @@ async function runSelfTest() {
           p1: top[0],
           p2: top[1],
           expected_updated_at: null,
-          entered_by: "Bracket audit",
+          entered_by: "Guest",
         }),
       pathname,
     );
 
     const beforeLeagueEdit = await readState(pathname);
     const leagueId = "pool-1";
-    const leagueStamp = beforeLeagueEdit.state.scores[leagueId].updated_at;
     const edited = await mutateState(
       (state) =>
         applyOperation(state, {
@@ -615,8 +618,8 @@ async function runSelfTest() {
           fixture_id: leagueId,
           p1_score: 2,
           p2_score: 0,
-          expected_updated_at: leagueStamp,
-          entered_by: "Bracket audit",
+          expected_updated_at: beforeLeagueEdit.state.scores[leagueId].updated_at,
+          entered_by: "Guest",
         }),
       pathname,
     );
@@ -624,6 +627,27 @@ async function runSelfTest() {
       (id) => !edited.state.scores[id],
     );
     checks.version_monotonic = edited.state.version > sf1.state.version;
+
+    let invalidPairRejected = false;
+    try {
+      await mutateState(
+        (state) =>
+          applyOperation(state, {
+            action: "save",
+            fixture_id: "pool-sf1",
+            p1_score: 1,
+            p2_score: 0,
+            p1: top[3],
+            p2: top[0],
+            expected_updated_at: null,
+            entered_by: "Guest",
+          }),
+        pathname,
+      );
+    } catch (error) {
+      invalidPairRejected = error?.name === "ScoreConflictError";
+    }
+    checks.invalid_knockout_pair_rejected = invalidPairRejected;
 
     const passed = Object.values(checks).every(Boolean);
     return {
@@ -649,10 +673,11 @@ export default async function handler(req, res) {
 
   if (req.method === "GET") {
     const query = requestQuery(req);
-    if (query.get("selftest") === SELF_TEST_TOKEN) {
+    if (process.env.VERCEL_ENV !== "production" && query.get("selftest") === "1") {
       try {
         return sendJson(res, 200, await runSelfTest());
       } catch (error) {
+        console.error("Tournament self-test failed", error);
         const message = error instanceof Error ? error.message : "Self-test failed";
         return sendJson(res, 500, { passed: false, error: message, name: error?.name });
       }
@@ -666,6 +691,7 @@ export default async function handler(req, res) {
         ...publicSnapshot(state),
       });
     } catch (error) {
+      console.error("Tournament state read failed", error);
       const message = error instanceof Error ? error.message : "Storage unavailable";
       return sendJson(res, 503, { error: `Score storage unavailable: ${message}` });
     }
@@ -696,6 +722,7 @@ export default async function handler(req, res) {
         return sendJson(res, 400, { error: error.message });
       }
 
+      console.error("Tournament state write failed", error);
       const message = error instanceof Error ? error.message : "Storage unavailable";
       return sendJson(res, 503, { error: `Score storage unavailable: ${message}` });
     }
