@@ -1,7 +1,8 @@
 import {
+  BlobNotFoundError,
   BlobPreconditionFailedError,
   del,
-  get,
+  head,
   put,
 } from "@vercel/blob";
 
@@ -168,20 +169,50 @@ function isAlreadyExists(error) {
     error?.name === "BlobAlreadyExistsError" || message.includes("already exists");
 }
 
+function isNotFound(error) {
+  return error instanceof BlobNotFoundError ||
+    error?.name === "BlobNotFoundError" ||
+    String(error?.message || "").toLowerCase().includes("does not exist");
+}
+
+function normalizeEtag(value) {
+  return String(value || "").replace(/^W\//, "");
+}
+
 async function readState(pathname = STORAGE_PATHNAME) {
-  const result = await get(pathname, {
-    access: "public",
-    headers: { "cache-control": "no-cache" },
-  });
-  if (!result) return { state: emptyState(), etag: null };
-  if (result.statusCode !== 200 || !result.stream) {
-    throw new Error("Score storage returned an invalid response.");
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    let metadata;
+    try {
+      metadata = await head(pathname);
+    } catch (error) {
+      if (isNotFound(error)) return { state: emptyState(), etag: null };
+      throw error;
+    }
+
+    const url = new URL(metadata.url);
+    url.searchParams.set("version", metadata.etag);
+    const response = await fetch(url, {
+      cache: "no-store",
+      headers: { "cache-control": "no-cache" },
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to read score storage (${response.status})`);
+    }
+
+    const responseEtag = response.headers.get("etag");
+    if (responseEtag && normalizeEtag(responseEtag) !== normalizeEtag(metadata.etag)) {
+      await delay(attempt);
+      continue;
+    }
+
+    const text = await response.text();
+    return {
+      state: normalizeState(text ? JSON.parse(text) : {}),
+      etag: metadata.etag,
+    };
   }
-  const text = await new Response(result.stream).text();
-  return {
-    state: normalizeState(text ? JSON.parse(text) : {}),
-    etag: result.blob.etag,
-  };
+
+  throw new Error("Could not read a consistent scoreboard snapshot.");
 }
 
 async function writeState(pathname, state, etag) {
@@ -189,7 +220,7 @@ async function writeState(pathname, state, etag) {
     access: "public",
     addRandomSuffix: false,
     contentType: "application/json; charset=utf-8",
-    cacheControlMaxAge: 0,
+    cacheControlMaxAge: 60,
   };
   if (etag) {
     options.allowOverwrite = true;
