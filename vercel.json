@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "headers": [
+    {
+      "source": "/api/tournament-state",
+      "headers": [
+        {
+          "key": "Vercel-CDN-Cache-Control",
+          "value": "max-age=8, stale-while-revalidate=2, stale-if-error=60"
+        }
+      ]
+    }
+  ]
+}
