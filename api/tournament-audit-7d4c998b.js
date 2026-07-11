@@ -1,4 +1,4 @@
-import { runTournamentAudit } from "./_tournament-core.js";
+import { runTournamentAudit } from "./_tournament-core-v2.js";
 
 function send(res, status, payload) {
   res.setHeader("cache-control", "no-store, max-age=0");
