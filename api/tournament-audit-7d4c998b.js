@@ -7,7 +7,7 @@ function send(res, status, payload) {
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return send(res, 405, { error: "Method not allowed." });
+  if (req.method !== "GET") return send(res, 405, { error: "Method not allowed." });
   try {
     return send(res, 200, await runTournamentAudit());
   } catch (error) {
