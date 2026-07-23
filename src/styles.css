@@ -104,7 +104,8 @@ body {
   font-weight: 600;
   letter-spacing: 0.02em;
   cursor: pointer;
-  padding: 4px 2px;
+  min-height: 36px;
+  padding: 8px 4px;
 }
 
 .cloud-sync-now-button:hover {
@@ -117,8 +118,8 @@ body {
 }
 
 .icon-btn {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--surface);
@@ -193,7 +194,8 @@ body {
   border: 1px solid var(--border);
   color: var(--text-mid);
   border-radius: 20px;
-  padding: 6px 13px;
+  min-height: 36px;
+  padding: 7px 13px;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -277,8 +279,8 @@ body {
 }
 
 .qty-stepper {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -299,6 +301,7 @@ body {
 .qty-input {
   width: 46px;
   min-width: 46px;
+  height: 36px;
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -337,8 +340,8 @@ body {
   border: none;
   color: var(--text-dim);
   border-radius: 6px;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -437,8 +440,8 @@ button {
   border: none;
   background: transparent;
   color: var(--text-dim);
-  width: 22px;
-  height: 22px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -456,6 +459,13 @@ button {
 .search-panel.has-query .clear-search-btn {
   opacity: 1;
   pointer-events: auto;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
 }
 
 .hidden {
