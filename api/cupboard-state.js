@@ -1,13 +1,16 @@
 import {
   BlobNotFoundError,
   BlobPreconditionFailedError,
+  get,
   head,
   put
 } from "@vercel/blob";
 import { applyOperations, normalizeState } from "./_cupboard-state-core.js";
 
 const STORAGE_PATHNAME =
-  process.env.CUPBOARD_STATE_PATHNAME || "cupboard-state.json";
+  process.env.CUPBOARD_STATE_PATHNAME || "cupboard-state-private.json";
+const LEGACY_STORAGE_PATHNAME =
+  process.env.CUPBOARD_LEGACY_STATE_PATHNAME || "cupboard-state.json";
 const MAX_WRITE_ATTEMPTS = 12;
 const EXTRA_ALLOWED_ORIGINS = String(
   process.env.CUPBOARD_ALLOWED_ORIGINS || ""
@@ -110,10 +113,10 @@ function delay(attempt) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function readState() {
+async function readLegacyState() {
   let metadata;
   try {
-    metadata = await head(STORAGE_PATHNAME);
+    metadata = await head(LEGACY_STORAGE_PATHNAME);
   } catch (error) {
     if (isNotFound(error)) {
       return { state: null, etag: null };
@@ -134,16 +137,35 @@ async function readState() {
 
   return {
     state: normalizeState(await response.json()),
-    etag: metadata.etag
+    etag: null
+  };
+}
+
+async function readState() {
+  const result = await get(STORAGE_PATHNAME, {
+    access: "private",
+    useCache: false
+  });
+
+  if (!result) {
+    return readLegacyState();
+  }
+
+  if (result.statusCode !== 200 || !result.stream) {
+    throw new Error("Cloud storage returned an unexpected response.");
+  }
+
+  return {
+    state: normalizeState(await new Response(result.stream).json()),
+    etag: result.blob.etag
   };
 }
 
 async function writeState(state, etag) {
   const options = {
-    access: "public",
+    access: "private",
     addRandomSuffix: false,
-    contentType: "application/json; charset=utf-8",
-    cacheControlMaxAge: 0
+    contentType: "application/json; charset=utf-8"
   };
 
   if (etag) {
@@ -240,11 +262,10 @@ export default async function handler(req, res) {
 
     try {
       await put(STORAGE_PATHNAME, JSON.stringify(normalized), {
-        access: "public",
+        access: "private",
         allowOverwrite: true,
         addRandomSuffix: false,
-        contentType: "application/json; charset=utf-8",
-        cacheControlMaxAge: 0
+        contentType: "application/json; charset=utf-8"
       });
       return sendJson(res, 200, { data: normalized });
     } catch (error) {
