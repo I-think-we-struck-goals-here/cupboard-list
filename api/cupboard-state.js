@@ -181,7 +181,7 @@ async function appendOperations(operations) {
   const timestamp = Date.now();
   await Promise.all(
     operations.map((operation, index) =>
-      put(eventPathname(operation, timestamp + index), "", {
+      put(eventPathname(operation, timestamp + index), "{}", {
         access: "public",
         addRandomSuffix: false,
         allowOverwrite: false,
