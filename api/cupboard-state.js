@@ -1,17 +1,10 @@
-import {
-  BlobNotFoundError,
-  BlobPreconditionFailedError,
-  get,
-  head,
-  put
-} from "@vercel/blob";
+import { BlobNotFoundError, head, list, put } from "@vercel/blob";
 import { applyOperations, normalizeState } from "./_cupboard-state-core.js";
 
-const STORAGE_PATHNAME =
-  process.env.CUPBOARD_STATE_PATHNAME || "cupboard-state-private.json";
 const LEGACY_STORAGE_PATHNAME =
   process.env.CUPBOARD_LEGACY_STATE_PATHNAME || "cupboard-state.json";
-const MAX_WRITE_ATTEMPTS = 12;
+const EVENT_PREFIX =
+  process.env.CUPBOARD_EVENT_PREFIX || "cupboard-events/";
 const EXTRA_ALLOWED_ORIGINS = String(
   process.env.CUPBOARD_ALLOWED_ORIGINS || ""
 )
@@ -85,34 +78,6 @@ function isNotFound(error) {
   );
 }
 
-function isPreconditionFailure(error) {
-  const message = String(error?.message || "").toLowerCase();
-  return (
-    error instanceof BlobPreconditionFailedError ||
-    error?.name === "BlobPreconditionFailedError" ||
-    error?.status === 412 ||
-    error?.statusCode === 412 ||
-    message.includes("conditional request cannot succeed") ||
-    message.includes("conflicting operation against this resource")
-  );
-}
-
-function isAlreadyExists(error) {
-  const message = String(error?.message || "").toLowerCase();
-  return (
-    error?.status === 409 ||
-    error?.statusCode === 409 ||
-    error?.name === "BlobAlreadyExistsError" ||
-    message.includes("already exists")
-  );
-}
-
-function delay(attempt) {
-  const milliseconds =
-    Math.min(250, 10 * 1.6 ** attempt) + Math.floor(Math.random() * 20);
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
 async function readLegacyState() {
   let metadata;
   try {
@@ -136,68 +101,95 @@ async function readLegacyState() {
   }
 
   return {
-    state: normalizeState(await response.json()),
-    etag: null
+    state: normalizeState(await response.json())
   };
+}
+
+function eventPathname(operation, timestamp) {
+  const nonce = globalThis.crypto.randomUUID();
+  const payload = Buffer.from(JSON.stringify(operation)).toString("base64url");
+  return `${EVENT_PREFIX}${String(timestamp).padStart(13, "0")}~${nonce}~${payload}.json`;
+}
+
+function parseEvent(pathname) {
+  if (!pathname.startsWith(EVENT_PREFIX) || !pathname.endsWith(".json")) {
+    return null;
+  }
+
+  const encoded = pathname
+    .slice(EVENT_PREFIX.length, -".json".length)
+    .split("~");
+  if (encoded.length !== 3) {
+    return null;
+  }
+
+  const timestamp = Number(encoded[0]);
+  if (!Number.isSafeInteger(timestamp)) {
+    return null;
+  }
+
+  try {
+    return {
+      timestamp,
+      operation: JSON.parse(Buffer.from(encoded[2], "base64url").toString())
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function listEvents() {
+  const blobs = [];
+  let cursor;
+
+  do {
+    const page = await list({
+      prefix: EVENT_PREFIX,
+      limit: 1000,
+      ...(cursor ? { cursor } : {})
+    });
+    blobs.push(...page.blobs);
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+
+  return blobs
+    .map((blob) => ({ pathname: blob.pathname, event: parseEvent(blob.pathname) }))
+    .filter(({ event }) => event)
+    .sort((a, b) => a.pathname.localeCompare(b.pathname))
+    .map(({ event }) => event);
 }
 
 async function readState() {
-  const result = await get(STORAGE_PATHNAME, {
-    access: "private",
-    useCache: false
-  });
+  const [{ state: legacyState }, events] = await Promise.all([
+    readLegacyState(),
+    listEvents()
+  ]);
+  let state = legacyState;
 
-  if (!result) {
-    return readLegacyState();
+  for (const event of events) {
+    state = applyOperations(
+      state,
+      [event.operation],
+      new Date(event.timestamp).toISOString()
+    );
   }
 
-  if (result.statusCode !== 200 || !result.stream) {
-    throw new Error("Cloud storage returned an unexpected response.");
-  }
-
-  return {
-    state: normalizeState(await new Response(result.stream).json()),
-    etag: result.blob.etag
-  };
+  return state;
 }
 
-async function writeState(state, etag) {
-  const options = {
-    access: "private",
-    addRandomSuffix: false,
-    contentType: "application/json; charset=utf-8"
-  };
-
-  if (etag) {
-    options.allowOverwrite = true;
-    options.ifMatch = etag;
-  } else {
-    options.allowOverwrite = false;
-  }
-
-  await put(STORAGE_PATHNAME, JSON.stringify(state), options);
-}
-
-async function applyOperationsSafely(operations) {
-  for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
-    const { state, etag } = await readState();
-    const nextState = applyOperations(state, operations);
-
-    try {
-      await writeState(nextState, etag);
-      return nextState;
-    } catch (error) {
-      const conflicted =
-        (etag && isPreconditionFailure(error)) ||
-        (!etag && isAlreadyExists(error));
-      if (!conflicted) {
-        throw error;
-      }
-      await delay(attempt);
-    }
-  }
-
-  throw new Error("The shared cupboard is busy. Please retry.");
+async function appendOperations(operations) {
+  const timestamp = Date.now();
+  await Promise.all(
+    operations.map((operation, index) =>
+      put(eventPathname(operation, timestamp + index), "", {
+        access: "public",
+        addRandomSuffix: false,
+        allowOverwrite: false,
+        contentType: "application/json; charset=utf-8"
+      })
+    )
+  );
+  return timestamp + operations.length - 1;
 }
 
 export default async function handler(req, res) {
@@ -209,7 +201,7 @@ export default async function handler(req, res) {
 
   if (req.method === "GET") {
     try {
-      const { state } = await readState();
+      const state = await readState();
       return sendJson(res, 200, { data: state });
     } catch (error) {
       const message =
@@ -234,7 +226,13 @@ export default async function handler(req, res) {
     }
 
     try {
-      const state = await applyOperationsSafely(operations);
+      const currentState = await readState();
+      const timestamp = await appendOperations(operations);
+      const state = applyOperations(
+        currentState,
+        operations,
+        new Date(timestamp).toISOString()
+      );
       return sendJson(res, 200, { data: state });
     } catch (error) {
       const statusCode = error instanceof TypeError ? 400 : 503;
@@ -257,17 +255,24 @@ export default async function handler(req, res) {
     }
 
     const normalized = normalizeState(payload);
-    normalized.version += 1;
-    normalized.updatedAt = new Date().toISOString();
 
     try {
-      await put(STORAGE_PATHNAME, JSON.stringify(normalized), {
-        access: "private",
-        allowOverwrite: true,
-        addRandomSuffix: false,
-        contentType: "application/json; charset=utf-8"
+      const currentState = await readState();
+      const restoredIds = new Set(normalized.items.map((item) => item.id));
+      const operations = [
+        ...normalized.items.map((item) => ({ type: "upsert", item })),
+        ...currentState.items
+          .filter((item) => !restoredIds.has(item.id))
+          .map((item) => ({ type: "delete", id: item.id }))
+      ];
+      const timestamp = await appendOperations(operations);
+      return sendJson(res, 200, {
+        data: applyOperations(
+          currentState,
+          operations,
+          new Date(timestamp).toISOString()
+        )
       });
-      return sendJson(res, 200, { data: normalized });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Blob not configured";

@@ -1,6 +1,7 @@
 import "./styles.css";
 
 const STORAGE_KEY = "cupboard-app-state-v1";
+const LAST_LOCAL_WRITE_KEY = "cupboard-app-last-local-write-v1";
 const CLOUD_API_PATH = "/api/cupboard-state";
 const GITHUB_PAGES_CLOUD_API_PATH = "https://cupboard-list-site.vercel.app/api/cupboard-state";
 const CLOUD_SYNC_DELAY_MS = 250;
@@ -316,6 +317,7 @@ function upsertOperation(item) {
 
 function saveState(operation) {
   saveStateLocal();
+  localStorage.setItem(LAST_LOCAL_WRITE_KEY, new Date().toISOString());
   queueCloudOperation(operation);
   scheduleCloudSync();
 }
@@ -618,7 +620,10 @@ async function runCloudSync() {
   updateCloudUI();
 
   try {
-    await cloudRequest("POST", { operations });
+    const result = await cloudRequest("POST", { operations });
+    if (result?.data?.updatedAt) {
+      localStorage.setItem(LAST_LOCAL_WRITE_KEY, result.data.updatedAt);
+    }
     cloudAvailable = true;
     cloudLastError = "";
     updateCloudBadge("synced", "Shared cloud");
@@ -682,6 +687,20 @@ async function pullCloudState(options = {}) {
 
     const fallbackItems = normalizeInitialItems();
     const remoteState = normalizeStatePayload(remotePayload, fallbackItems);
+    const lastLocalWrite = localStorage.getItem(LAST_LOCAL_WRITE_KEY);
+    if (
+      lastLocalWrite &&
+      (!remotePayload.updatedAt ||
+        new Date(remotePayload.updatedAt).getTime() <
+          new Date(lastLocalWrite).getTime())
+    ) {
+      updateCloudBadge("syncing", "Syncing...");
+      return;
+    }
+
+    if (lastLocalWrite) {
+      localStorage.removeItem(LAST_LOCAL_WRITE_KEY);
+    }
     const remoteSignature = stateSignature(remoteState);
     const localSignature = stateSignature(state);
 
