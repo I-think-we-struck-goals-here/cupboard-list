@@ -3,8 +3,8 @@ import "./styles.css";
 const STORAGE_KEY = "cupboard-app-state-v1";
 const CLOUD_API_PATH = "/api/cupboard-state";
 const GITHUB_PAGES_CLOUD_API_PATH = "https://cupboard-list-site.vercel.app/api/cupboard-state";
-const CLOUD_SYNC_DELAY_MS = 450;
-const CLOUD_POLL_INTERVAL_MS = 7000;
+const CLOUD_SYNC_DELAY_MS = 250;
+const CLOUD_POLL_INTERVAL_MS = 2500;
 
 const SEED_ITEMS = [
   { name: "Arribato rice", quantity: "1.25", category: "Grains & Pasta" },
@@ -108,12 +108,11 @@ let pendingDeletedItem = null;
 let undoTimerId = null;
 let cloudSyncTimerId = null;
 let cloudSyncInFlight = false;
-let cloudSyncQueued = false;
 let cloudLastError = "";
 let cloudPollIntervalId = null;
-let lastCloudSignature = "";
 let cloudAvailable = false;
 let hasPendingLocalChanges = false;
+let pendingCloudOperations = [];
 
 function resolveCloudApiEndpoints() {
   const override =
@@ -284,9 +283,40 @@ function saveStateLocal() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function saveState() {
+function coalesceCloudOperations(operations) {
+  const latestByItem = new Map();
+  for (const operation of operations) {
+    const id =
+      operation?.type === "upsert"
+        ? operation.item?.id
+        : operation?.type === "delete"
+          ? operation.id
+          : null;
+    if (id) {
+      latestByItem.set(String(id), operation);
+    }
+  }
+  return [...latestByItem.values()];
+}
+
+function queueCloudOperation(operation) {
+  pendingCloudOperations = coalesceCloudOperations([
+    ...pendingCloudOperations,
+    operation
+  ]);
+  hasPendingLocalChanges = pendingCloudOperations.length > 0;
+}
+
+function upsertOperation(item) {
+  return {
+    type: "upsert",
+    item: JSON.parse(JSON.stringify(item))
+  };
+}
+
+function saveState(operation) {
   saveStateLocal();
-  hasPendingLocalChanges = true;
+  queueCloudOperation(operation);
   scheduleCloudSync();
 }
 
@@ -449,7 +479,7 @@ function renderRows() {
 
       qtyInput.addEventListener("change", () => {
         item.quantity = qtyInput.value.trim();
-        saveState();
+        saveState(upsertOperation(item));
         render();
       });
 
@@ -457,7 +487,7 @@ function renderRows() {
         const current = toNumberOrNull(item.quantity) ?? 0;
         const next = Math.max(0, current - 1);
         item.quantity = formatQuantity(next);
-        saveState();
+        saveState(upsertOperation(item));
         render();
       });
 
@@ -465,7 +495,7 @@ function renderRows() {
         const current = toNumberOrNull(item.quantity) ?? 0;
         const next = current + 1;
         item.quantity = formatQuantity(next);
-        saveState();
+        saveState(upsertOperation(item));
         render();
       });
 
@@ -527,7 +557,8 @@ async function cloudRequest(method, payload) {
     method,
     headers: {
       "content-type": "application/json"
-    }
+    },
+    keepalive: method !== "GET"
   };
 
   if (payload !== undefined) {
@@ -552,8 +583,13 @@ async function cloudRequest(method, payload) {
       parsed = null;
     }
 
+    if (response.ok && parsed) {
+      return parsed;
+    }
+
     if (response.ok) {
-      return parsed ?? {};
+      lastError = new Error("Cloud API returned an invalid response.");
+      continue;
     }
 
     const message = parsed?.error || `Cloud API error (${response.status}).`;
@@ -570,34 +606,35 @@ async function cloudRequest(method, payload) {
 }
 
 async function runCloudSync() {
-  if (cloudSyncInFlight) {
-    cloudSyncQueued = true;
+  if (cloudSyncInFlight || pendingCloudOperations.length === 0) {
     return;
   }
 
+  clearCloudTimer();
+  const operations = pendingCloudOperations;
+  pendingCloudOperations = [];
+  hasPendingLocalChanges = false;
   cloudSyncInFlight = true;
   updateCloudUI();
 
   try {
-    const payload = JSON.parse(JSON.stringify(state));
-    const result = await cloudRequest("PUT", { data: payload });
-    const remotePayload = result?.data ?? payload;
-    const fallbackItems = normalizeInitialItems();
-    const normalized = normalizeStatePayload(remotePayload, fallbackItems);
-    lastCloudSignature = stateSignature(normalized);
-    hasPendingLocalChanges = false;
+    await cloudRequest("POST", { operations });
     cloudAvailable = true;
     cloudLastError = "";
     updateCloudBadge("synced", "Shared cloud");
   } catch (error) {
+    pendingCloudOperations = coalesceCloudOperations([
+      ...operations,
+      ...pendingCloudOperations
+    ]);
+    hasPendingLocalChanges = pendingCloudOperations.length > 0;
     cloudAvailable = false;
     cloudLastError = error instanceof Error ? error.message : "Unknown cloud sync error";
     updateCloudBadge("error", "Cloud error");
   } finally {
     cloudSyncInFlight = false;
     updateCloudUI();
-    if (cloudSyncQueued) {
-      cloudSyncQueued = false;
+    if (pendingCloudOperations.length > 0 && cloudAvailable) {
       scheduleCloudSync();
     }
   }
@@ -636,6 +673,8 @@ async function pullCloudState(options = {}) {
 
     if (!remotePayload) {
       if (seedIfMissing) {
+        pendingCloudOperations = state.items.map(upsertOperation);
+        hasPendingLocalChanges = pendingCloudOperations.length > 0;
         await runCloudSync();
       }
       return;
@@ -646,9 +685,7 @@ async function pullCloudState(options = {}) {
     const remoteSignature = stateSignature(remoteState);
     const localSignature = stateSignature(state);
 
-    lastCloudSignature = remoteSignature;
     cloudLastError = "";
-    hasPendingLocalChanges = false;
 
     if (remoteSignature !== localSignature) {
       state = remoteState;
@@ -689,17 +726,22 @@ async function initCloud() {
   startCloudPolling();
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      if (hasPendingLocalChanges || cloudSyncInFlight) {
-        void runCloudSync();
-        return;
-      }
+    if (hasPendingLocalChanges && !cloudSyncInFlight) {
+      void runCloudSync();
+      return;
+    }
 
+    if (document.visibilityState === "visible") {
       void pullCloudState();
     }
   });
 
-  window.addEventListener("beforeunload", clearCloudPolling);
+  window.addEventListener("pagehide", () => {
+    clearCloudPolling();
+    if (hasPendingLocalChanges && !cloudSyncInFlight) {
+      void runCloudSync();
+    }
+  });
   setFormMessage(cloudAvailable ? "Ready. Shared cloud sync enabled." : "Ready. Local-only mode.", "ok");
 }
 
@@ -742,7 +784,7 @@ function restoreDeletedItem() {
     state.customCategories.sort((a, b) => a.localeCompare(b));
   }
 
-  saveState();
+  saveState(upsertOperation(item));
   hideUndoToast(true);
   render();
   setFormMessage(`Restored ${item.name}.`, "ok");
@@ -879,7 +921,7 @@ function saveEditedItem(event) {
     state.customCategories.sort((a, b) => a.localeCompare(b));
   }
 
-  saveState();
+  saveState(upsertOperation(item));
   closeEditDialog();
   render();
   setFormMessage(`Updated ${name}.`, "ok");
@@ -897,7 +939,7 @@ function deleteEditingItem() {
   }
 
   const [removedItem] = state.items.splice(itemIndex, 1);
-  saveState();
+  saveState({ type: "delete", id: removedItem.id });
   closeEditDialog();
   render();
   showUndoToast(removedItem, itemIndex);
@@ -937,20 +979,21 @@ function addItemFromForm(event) {
     return;
   }
 
-  state.items.push({
+  const newItem = {
     id: createId(),
     name,
     quantity,
     lowLevel,
     category
-  });
+  };
+  state.items.push(newItem);
 
   if (!BUILTIN_CATEGORIES.includes(category) && !state.customCategories.includes(category)) {
     state.customCategories.push(category);
     state.customCategories.sort((a, b) => a.localeCompare(b));
   }
 
-  saveState();
+  saveState(upsertOperation(newItem));
   render();
 
   newItemForm.reset();
@@ -1000,7 +1043,11 @@ function wireEvents() {
     }, 200);
   });
   cloudSyncNowButton.addEventListener("click", () => {
-    void runCloudSync();
+    if (hasPendingLocalChanges) {
+      void runCloudSync();
+      return;
+    }
+    void pullCloudState({ force: true });
   });
   newCategorySelect.addEventListener("change", syncCustomCategoryInput);
   newItemForm.addEventListener("submit", addItemFromForm);

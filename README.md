@@ -33,5 +33,6 @@ Without Blob env vars, the app stays local-only.
 Notes:
 - No sign-in is required.
 - Everyone using the same site URL shares the same cupboard state.
-- Writes are last-write-wins, and each client polls for updates every few seconds.
+- Each edit is saved as an item-level operation, so updates to different items do not overwrite each other.
+- Visible devices check for updates every 2.5 seconds and flush pending changes when the page is hidden.
 - If opened from `*.github.io`, the app auto-uses the Vercel API endpoint for cloud sync.
